@@ -1,6 +1,6 @@
 [project]
 name = "cleanrr"
-version = "0.1.0"
+dynamic = ["version"]
 description = "Telegram bot for self-service homelab media management (Sonarr / Radarr / Overseerr / qBittorrent)"
 readme = "README.md"
 license = { file = "LICENSE" }
@@ -24,8 +24,11 @@ dev = [
 cleanrr = "cleanrr.__main__:main"
 
 [build-system]
-requires = ["hatchling"]
+requires = ["hatchling", "hatch-vcs"]
 build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
 
 [tool.hatch.build.targets.wheel]
 packages = ["cleanrr"]
