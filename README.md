@@ -5,8 +5,7 @@
 [![License](https://img.shields.io/github/license/RayanAlyasi/cleanrr)](LICENSE)
 [![Stars](https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social)](https://github.com/RayanAlyasi/cleanrr/stargazers)
 [![Python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Docker Pulls](https://img.shields.io/docker/pulls/rayanalyasi/cleanrr?logo=docker)](https://hub.docker.com/r/rayanalyasi/cleanrr)
-[![Image Size](https://img.shields.io/docker/image-size/rayanalyasi/cleanrr/latest?logo=docker)](https://hub.docker.com/r/rayanalyasi/cleanrr/tags)
+[![Container](https://img.shields.io/badge/container-ghcr.io-2088FF?logo=docker&logoColor=white)](https://github.com/RayanAlyasi/cleanrr/pkgs/container/cleanrr)
 
 A Telegram bot that lets your friends and family fix their own media issues on your homelab instead of pinging you.
 
