@@ -1,0 +1,16 @@
+services:
+  cleanrr:
+    build: .
+    container_name: cleanrr
+    restart: unless-stopped
+    env_file:
+      - .env
+    volumes:
+      - ./data:/app/data
+    networks:
+      - media
+
+networks:
+  media:
+    name: ${DOCKER_NETWORK_NAME:-media}
+    external: true
