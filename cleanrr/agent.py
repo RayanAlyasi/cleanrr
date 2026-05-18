@@ -35,9 +35,7 @@ class Agent:
         if self._client is not None:
             return
         stack = AsyncExitStack()
-        self._client = await stack.enter_async_context(
-            ClaudeSDKClient(options=self._options)
-        )
+        self._client = await stack.enter_async_context(ClaudeSDKClient(options=self._options))
         self._stack = stack
 
     async def stop(self) -> None:

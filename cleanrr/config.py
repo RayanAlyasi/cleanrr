@@ -38,9 +38,7 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def _require_one_auth_method(self) -> Self:
         if self.claude_code_oauth_token is None and self.anthropic_api_key is None:
-            raise ValueError(
-                "Set either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in .env"
-            )
+            raise ValueError("Set either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in .env")
         return self
 
 

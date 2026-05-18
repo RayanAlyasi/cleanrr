@@ -18,12 +18,16 @@ AGENT_KEY = "agent"
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
     await update.message.reply_text(
         "cleanrr is online. Ask me anything — fix actions land in a later phase."
     )
 
 
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None:
+        return
     await update.message.reply_text(
         "Commands:\n"
         "/start — sanity check\n"
@@ -33,6 +37,10 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    # PTB types every Update field as Optional, but our filters guarantee these are present.
+    if update.message is None or update.message.text is None or update.effective_user is None:
+        return
+
     agent: Agent = context.application.bot_data[AGENT_KEY]
     user = update.effective_user
     text = update.message.text
@@ -71,7 +79,7 @@ def build_application(settings: Settings) -> Application:
 
 
 def main() -> None:
-    settings = Settings()
+    settings = Settings()  # type: ignore[call-arg]  # populated from .env at runtime
 
     logging.basicConfig(
         level=settings.log_level.upper(),
