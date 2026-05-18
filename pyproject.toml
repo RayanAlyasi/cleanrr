@@ -49,7 +49,17 @@ select = [
     "UP",  # pyupgrade
     "SIM", # flake8-simplify
     "C4",  # flake8-comprehensions
+    "ARG", # flake8-unused-arguments
+    "ERA", # eradicate (commented-out code)
+    "RET", # flake8-return
+    "PIE", # flake8-pie
+    "RUF", # ruff-specific
 ]
+
+[tool.ruff.lint.per-file-ignores]
+# python-telegram-bot handlers have a framework-mandated signature
+# (`update`, `context`); `context` is often unused.
+"cleanrr/bot.py" = ["ARG001"]
 
 [tool.pyright]
 include = ["cleanrr", "tests"]
