@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.1...v0.1.2) (2026-05-18)
+
+
+### Bug Fixes
+
+* **ci:** use lowercased tag from metadata-action for Trivy ([#24](https://github.com/RayanAlyasi/cleanrr/issues/24)) ([6d2d534](https://github.com/RayanAlyasi/cleanrr/commit/6d2d53476853208ee4fd512e1edf87c1a7e71968))
+
 ## [0.1.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.0...v0.1.1) (2026-05-18)
 
 
