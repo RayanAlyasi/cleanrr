@@ -17,7 +17,7 @@ RUN apt-get update \
 ARG VERSION=0.0.0+local
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 
-COPY pyproject.toml ./
+COPY pyproject.toml LICENSE README.md ./
 COPY cleanrr ./cleanrr
 RUN pip install .
 
