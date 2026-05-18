@@ -3,6 +3,14 @@ name: Release
 on:
   push:
     tags: ["v*.*.*"]
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Tag to release (e.g. v0.1.2)"
+        required: true
+        type: string
 
 jobs:
   publish:
@@ -10,8 +18,16 @@ jobs:
     permissions:
       contents: read
       packages: write
+    env:
+      # Tag name resolves from any of the three trigger sources. release-please
+      # creates tags via the API which don't fire push:tags, so we listen for
+      # release:published (which release-please does emit) and accept manual
+      # workflow_dispatch as a fallback.
+      TAG_NAME: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
     steps:
       - uses: actions/checkout@v6
+        with:
+          ref: ${{ env.TAG_NAME }}
 
       - uses: docker/setup-qemu-action@v4
 
@@ -30,8 +46,8 @@ jobs:
         with:
           images: ghcr.io/${{ github.repository_owner }}/cleanrr
           tags: |
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{version}},value=${{ env.TAG_NAME }}
+            type=semver,pattern={{major}}.{{minor}},value=${{ env.TAG_NAME }}
             type=raw,value=latest
 
       - name: Build and push
