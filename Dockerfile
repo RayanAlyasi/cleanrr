@@ -15,7 +15,7 @@ RUN apt-get update \
 # Release CI passes the real version via --build-arg; local builds get a
 # placeholder so the package metadata still resolves.
 ARG VERSION=0.0.0+local
-ENV HATCH_VCS_PRETEND_VERSION=$VERSION
+ENV SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 
 COPY pyproject.toml ./
 COPY cleanrr ./cleanrr
