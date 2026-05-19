@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.1.3](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.2...v0.1.3) (2026-05-19)
+
+
+### Bug Fixes
+
+* **ci:** apt-get upgrade in Dockerfile to clear base-image CVEs ([#28](https://github.com/RayanAlyasi/cleanrr/issues/28)) ([0676282](https://github.com/RayanAlyasi/cleanrr/commit/0676282286cc4ee3f1ee498904e2a64d29509a8f))
+
+
+### Documentation
+
+* add logo pack and use hero banner in README ([#26](https://github.com/RayanAlyasi/cleanrr/issues/26)) ([7e8cfe4](https://github.com/RayanAlyasi/cleanrr/commit/7e8cfe4f2795965d17613ed81bc21dee0ab5f281))
+
 ## [0.1.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.1...v0.1.2) (2026-05-18)
 
 
