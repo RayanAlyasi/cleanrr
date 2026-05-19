@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 600 160" width="600" height="160" role="img" aria-label="cleanrr">
+  <title>cleanrr</title>
+  <rect width="100%" height="100%" fill="#FFFFFF"/>
+  <text x="300" y="105" text-anchor="middle"
+        font-family="-apple-system, BlinkMacSystemFont, 'Inter', 'Segoe UI', 'Helvetica Neue', Arial, sans-serif"
+        font-size="96" letter-spacing="-2"
+        fill="#111827">clean<tspan font-weight="700">rr</tspan></text>
+</svg>

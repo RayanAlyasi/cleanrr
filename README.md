@@ -1,11 +1,15 @@
-# cleanrr
+<p align="center">
+  <img src="assets/logo/cleanrr-hero.png" alt="cleanrr — fix your media requests, faster" width="800">
+</p>
 
-[![CI](https://img.shields.io/github/actions/workflow/status/RayanAlyasi/cleanrr/ci.yml?branch=main)](https://github.com/RayanAlyasi/cleanrr/actions)
-[![Release](https://img.shields.io/github/v/release/RayanAlyasi/cleanrr)](https://github.com/RayanAlyasi/cleanrr/releases)
-[![License](https://img.shields.io/github/license/RayanAlyasi/cleanrr)](LICENSE)
-[![Stars](https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social)](https://github.com/RayanAlyasi/cleanrr/stargazers)
-[![Python](https://img.shields.io/badge/python-%3E%3D3.12-3776AB?logo=python&logoColor=white)](https://www.python.org/)
-[![Container](https://img.shields.io/badge/container-ghcr.io-2088FF?logo=docker&logoColor=white)](https://github.com/RayanAlyasi/cleanrr/pkgs/container/cleanrr)
+<p align="center">
+  <a href="https://github.com/RayanAlyasi/cleanrr/actions"><img src="https://img.shields.io/github/actions/workflow/status/RayanAlyasi/cleanrr/ci.yml?branch=main" alt="CI"></a>
+  <a href="https://github.com/RayanAlyasi/cleanrr/releases"><img src="https://img.shields.io/github/v/release/RayanAlyasi/cleanrr" alt="Release"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/github/license/RayanAlyasi/cleanrr" alt="License"></a>
+  <a href="https://github.com/RayanAlyasi/cleanrr/stargazers"><img src="https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social" alt="Stars"></a>
+  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-%3E%3D3.12-3776AB?logo=python&logoColor=white" alt="Python"></a>
+  <a href="https://github.com/RayanAlyasi/cleanrr/pkgs/container/cleanrr"><img src="https://img.shields.io/badge/container-ghcr.io-2088FF?logo=docker&logoColor=white" alt="Container"></a>
+</p>
 
 A Telegram bot that lets your friends and family fix their own media issues on your homelab instead of pinging you.
 
@@ -101,6 +105,10 @@ cleanrr/
 - [ ] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
 - [ ] **Phase 5** — Write tools behind in-chat confirmation
 - [ ] **Phase 6** — Proactive notifications + polish (Maintainerr / Decluttarr alongside, admin commands, per-user rate limits)
+
+### Out of scope (for now)
+
+- **Multi-AI provider support** (OpenAI, Gemini, local Ollama). cleanrr is built on the Claude Agent SDK because it bundles tool execution, per-user sessions, and permission callbacks that we lean on heavily from Phase 4 onward — generic LLM abstractions lose those benefits. Could revisit after Phase 6 if there's real demand.
 
 ## A note on Anthropic's terms
 
