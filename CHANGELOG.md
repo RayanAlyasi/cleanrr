@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.3...v0.2.0) (2026-05-19)
+
+
+### Features
+
+* /invite and /link commands with SQLite identity store ([#31](https://github.com/RayanAlyasi/cleanrr/issues/31)) ([0a11447](https://github.com/RayanAlyasi/cleanrr/commit/0a114471951ab5a709d7f422f632834dbfe15e8b))
+
 ## [0.1.3](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.2...v0.1.3) (2026-05-19)
 
 
