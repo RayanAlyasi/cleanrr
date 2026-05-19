@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" width="512" height="512" role="img" aria-label="cleanrr avatar">
+  <title>cleanrr avatar</title>
+  <desc>cleanrr avatar tile, version v4.</desc>
+  <rect width="512" height="512" rx="112" fill="#FFFFFF"/>
+
+    <g transform="translate(256,290)" fill="#111827" stroke="#111827">
+      <path d="M -125 0 Q -125 -150, 0 -150 Q 125 -150, 125 0 L 125 40 Q 105 70, 75 60 Q 45 50, 25 70 Q 0 90, -25 70 Q -45 50, -75 60 Q -105 70, -125 40 Z" stroke="none"/>
+      <path d="M -90 30 Q -135 45, -140 90" stroke-width="17.5" fill="none" stroke-linecap="round"/>
+      <path d="M -35 65 Q -45 110, -20 125" stroke-width="17.5" fill="none" stroke-linecap="round"/>
+      <path d="M 35 65 Q 45 110, 20 125" stroke-width="17.5" fill="none" stroke-linecap="round"/>
+      <path d="M 90 30 Q 135 45, 140 90" stroke-width="17.5" fill="none" stroke-linecap="round"/>
+    </g>
+    <g transform="translate(256,290)" stroke="none">
+      <circle cx="-40" cy="-55" r="25" fill="#FFFFFF"/>
+      <circle cx="40" cy="-55" r="25" fill="#FFFFFF"/>
+      <circle cx="-32" cy="-60" r="10" fill="#111827"/>
+      <circle cx="48" cy="-60" r="10" fill="#111827"/>
+      <path d="M -25 -5 Q 0 15, 25 -5" stroke="#FFFFFF" stroke-width="6.5" fill="none" stroke-linecap="round"/>
+    </g>
+
+</svg>

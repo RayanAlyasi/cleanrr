@@ -1,0 +1,141 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1600 600" width="1600" height="600" role="img" aria-label="cleanrr">
+  <title>cleanrr — fix your media requests, faster</title>
+  <desc>cleanrr hero composition: octopus mascot on left, wordmark and tagline on right, with subtle particles on a dark canvas.</desc>
+  <defs>
+    <radialGradient id="bgGlow" cx="50%" cy="50%" r="70%">
+      <stop offset="0%" stop-color="#141a2e"/>
+      <stop offset="60%" stop-color="#0a0d18"/>
+      <stop offset="100%" stop-color="#05070f"/>
+    </radialGradient>
+    <radialGradient id="octoHalo" cx="50%" cy="50%" r="50%">
+      <stop offset="0%" stop-color="#22d3ee" stop-opacity="0.15"/>
+      <stop offset="50%" stop-color="#8b5cf6" stop-opacity="0.06"/>
+      <stop offset="100%" stop-color="#070912" stop-opacity="0"/>
+    </radialGradient>
+    <linearGradient id="wordGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#FFFFFF"/>
+      <stop offset="100%" stop-color="#cffafe"/>
+    </linearGradient>
+    <linearGradient id="rrGrad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#a78bfa"/>
+      <stop offset="100%" stop-color="#22d3ee"/>
+    </linearGradient>
+    <filter id="particleBloom" x="-100%" y="-100%" width="300%" height="300%">
+      <feGaussianBlur stdDeviation="1.5"/>
+    </filter>
+    <filter id="textGlow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="1.2" result="blur"/>
+      <feMerge>
+        <feMergeNode in="blur"/>
+        <feMergeNode in="SourceGraphic"/>
+      </feMerge>
+    </filter>
+  </defs>
+
+  <rect width="1600" height="600" fill="url(#bgGlow)"/>
+
+  <g opacity="0.18">
+    <line x1="0" y1="150" x2="1600" y2="150" stroke="#1e293b" stroke-width="1"/>
+    <line x1="0" y1="300" x2="1600" y2="300" stroke="#1e293b" stroke-width="1"/>
+    <line x1="0" y1="450" x2="1600" y2="450" stroke="#1e293b" stroke-width="1"/>
+    <line x1="280" y1="0" x2="280" y2="600" stroke="#1e293b" stroke-width="1"/>
+    <line x1="660" y1="0" x2="660" y2="600" stroke="#1e293b" stroke-width="1"/>
+    <line x1="1040" y1="0" x2="1040" y2="600" stroke="#1e293b" stroke-width="1"/>
+    <line x1="1420" y1="0" x2="1420" y2="600" stroke="#1e293b" stroke-width="1"/>
+  </g>
+
+  <g filter="url(#particleBloom)">
+    <circle cx="95" cy="85" r="1.5" fill="#22d3ee" opacity="0.7"/>
+    <circle cx="210" cy="50" r="2" fill="#a5f3fc" opacity="0.8"/>
+    <circle cx="380" cy="100" r="1.2" fill="#a78bfa" opacity="0.5"/>
+    <circle cx="540" cy="65" r="2.5" fill="#22d3ee" opacity="0.6"/>
+    <circle cx="730" cy="40" r="1.5" fill="#5eead4" opacity="0.6"/>
+    <circle cx="920" cy="90" r="2" fill="#a5f3fc" opacity="0.7"/>
+    <circle cx="1110" cy="55" r="2.2" fill="#a78bfa" opacity="0.5"/>
+    <circle cx="1295" cy="105" r="1.5" fill="#22d3ee" opacity="0.7"/>
+    <circle cx="1460" cy="65" r="2" fill="#5eead4" opacity="0.6"/>
+    <circle cx="1555" cy="130" r="1.5" fill="#a5f3fc" opacity="0.6"/>
+
+    <circle cx="50" cy="260" r="2" fill="#22d3ee" opacity="0.5"/>
+    <circle cx="140" cy="220" r="1.2" fill="#a78bfa" opacity="0.5"/>
+    <circle cx="1510" cy="280" r="2" fill="#a5f3fc" opacity="0.6"/>
+    <circle cx="1555" cy="370" r="1.5" fill="#22d3ee" opacity="0.5"/>
+
+    <circle cx="70" cy="370" r="1.5" fill="#a78bfa" opacity="0.6"/>
+    <circle cx="140" cy="450" r="2" fill="#22d3ee" opacity="0.5"/>
+    <circle cx="95" cy="525" r="1.5" fill="#5eead4" opacity="0.5"/>
+    <circle cx="240" cy="565" r="2" fill="#a5f3fc" opacity="0.6"/>
+    <circle cx="425" cy="540" r="1.2" fill="#a78bfa" opacity="0.5"/>
+    <circle cx="590" cy="570" r="2" fill="#22d3ee" opacity="0.6"/>
+    <circle cx="755" cy="545" r="1.5" fill="#5eead4" opacity="0.5"/>
+    <circle cx="945" cy="575" r="1.5" fill="#a5f3fc" opacity="0.6"/>
+    <circle cx="1110" cy="535" r="2.2" fill="#a78bfa" opacity="0.5"/>
+    <circle cx="1275" cy="560" r="1.2" fill="#22d3ee" opacity="0.5"/>
+    <circle cx="1415" cy="535" r="2" fill="#5eead4" opacity="0.6"/>
+    <circle cx="1540" cy="560" r="1.5" fill="#a5f3fc" opacity="0.5"/>
+    <circle cx="1470" cy="470" r="2.2" fill="#a78bfa" opacity="0.5"/>
+
+    <circle cx="760" cy="180" r="1" fill="#22d3ee" opacity="0.6"/>
+    <circle cx="950" cy="160" r="1.2" fill="#a78bfa" opacity="0.7"/>
+    <circle cx="1135" cy="200" r="1.5" fill="#a5f3fc" opacity="0.5"/>
+    <circle cx="830" cy="440" r="1.2" fill="#5eead4" opacity="0.5"/>
+    <circle cx="1015" cy="465" r="1.5" fill="#22d3ee" opacity="0.6"/>
+    <circle cx="1200" cy="425" r="1.2" fill="#a78bfa" opacity="0.5"/>
+  </g>
+
+  <g opacity="0.22">
+    <path d="M 140 180 Q 310 250, 470 305" stroke="#22d3ee" stroke-width="1" fill="none" stroke-dasharray="4 10"/>
+    <path d="M 1460 180 Q 1290 250, 1130 305" stroke="#a78bfa" stroke-width="1" fill="none" stroke-dasharray="4 10"/>
+    <path d="M 190 480 Q 355 400, 520 360" stroke="#5eead4" stroke-width="1" fill="none" stroke-dasharray="4 10"/>
+    <path d="M 1410 480 Q 1245 400, 1080 360" stroke="#a5f3fc" stroke-width="1" fill="none" stroke-dasharray="4 10"/>
+  </g>
+
+  <circle cx="450" cy="300" r="320" fill="url(#octoHalo)"/>
+
+  <g transform="translate(450, 300) scale(3.0)">
+    <g fill="#FFFFFF" stroke="#FFFFFF">
+      <path d="M -44 -6 Q -44 -56, 0 -56 Q 44 -56, 44 -6 L 44 14 Q 36 22, 26 18 Q 16 14, 8 20 Q 0 26, -8 20 Q -16 14, -26 18 Q -36 22, -44 14 Z" stroke="none"/>
+      <path d="M -36 -2 Q -58 -16, -68 -38" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <circle cx="-68" cy="-42" r="6" stroke="none" fill="#22d3ee"/>
+      <path d="M 36 -2 Q 58 -16, 68 -38" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <circle cx="68" cy="-42" r="6" stroke="none" fill="#a78bfa"/>
+      <path d="M -42 6 Q -64 8, -70 -8 Q -72 -22, -60 -22" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M 42 6 Q 64 8, 70 -8 Q 72 -22, 60 -22" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M 36 18 Q 52 28, 60 42" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <rect x="52" y="42" width="20" height="14" rx="2" stroke="none" fill="#5eead4"/>
+      <path d="M -22 22 Q -34 40, -24 54 Q -16 64, -8 56" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M 22 22 Q 34 40, 24 54 Q 16 64, 8 56" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M -8 24 Q -10 40, -2 48" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M 8 24 Q 10 40, 2 48" stroke-width="5.5" fill="none" stroke-linecap="round"/>
+      <path d="M -82 -54 L -80 -48 L -74 -46 L -80 -44 L -82 -38 L -84 -44 L -90 -46 L -84 -48 Z" fill="#a5f3fc" stroke="none"/>
+    </g>
+    <g stroke="none">
+      <circle cx="-14" cy="-22" r="8" fill="#0a0d18"/>
+      <circle cx="14" cy="-22" r="8" fill="#0a0d18"/>
+      <circle cx="-11" cy="-24" r="3" fill="#22d3ee"/>
+      <circle cx="17" cy="-24" r="3" fill="#22d3ee"/>
+      <path d="M -9 -6 Q 0 4, 9 -6" stroke="#0a0d18" stroke-width="2.5" fill="none" stroke-linecap="round"/>
+      <rect x="56" y="46" width="2" height="2" fill="#0a0d18"/>
+      <rect x="61" y="46" width="2" height="2" fill="#0a0d18"/>
+      <rect x="66" y="46" width="2" height="2" fill="#0a0d18"/>
+    </g>
+  </g>
+
+  <g transform="translate(450, 300)" opacity="0.6">
+    <circle cx="-260" cy="-90" r="3" fill="#22d3ee"/>
+    <circle cx="-295" cy="-30" r="2" fill="#a5f3fc"/>
+    <circle cx="260" cy="-90" r="3" fill="#a78bfa"/>
+    <circle cx="295" cy="-30" r="2" fill="#a5f3fc"/>
+    <circle cx="-220" cy="160" r="2.5" fill="#5eead4"/>
+    <circle cx="220" cy="160" r="2.2" fill="#22d3ee"/>
+  </g>
+
+  <g transform="translate(800, 200)">
+    <g filter="url(#textGlow)">
+      <text x="0" y="120" font-family="ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, 'Inter', sans-serif" font-size="172" font-weight="300" letter-spacing="-6" fill="url(#wordGrad)">clean<tspan font-weight="700" fill="url(#rrGrad)">rr</tspan></text>
+    </g>
+    <text x="8" y="190" font-family="ui-sans-serif, system-ui, 'Inter', sans-serif" font-size="36" font-weight="400" fill="#cbd5e1" letter-spacing="-0.4">fix your media requests, faster</text>
+    <line x1="8" y1="225" x2="90" y2="225" stroke="#22d3ee" stroke-width="4" stroke-linecap="round" opacity="0.8"/>
+    <text x="8" y="275" font-family="ui-monospace, 'SF Mono', Monaco, Consolas, monospace" font-size="22" font-weight="400" letter-spacing="4" fill="#64748b">SONARR · RADARR · OVERSEERR</text>
+  </g>
+</svg>
