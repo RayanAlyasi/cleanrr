@@ -1,7 +1,8 @@
 import os
+from pathlib import Path
 from typing import Self
 
-from pydantic import Field, SecretStr, model_validator
+from pydantic import Field, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -33,7 +34,28 @@ class Settings(BaseSettings):
         description="Override the built-in bot persona. Empty means use the default.",
     )
 
+    admin_telegram_ids: set[int] = Field(
+        default_factory=set,
+        description="Telegram user IDs allowed to run /invite; empty disables /invite.",
+    )
+    database_path: Path = Field(
+        default=Path("data/cleanrr.db"),
+        description="SQLite path for link codes and Telegram↔Overseerr mappings.",
+    )
+    link_code_ttl_hours: int = Field(
+        default=24,
+        description="How long link codes remain valid before expiring",
+        gt=0,
+    )
+
     log_level: str = Field(default="INFO")
+
+    @field_validator("admin_telegram_ids", mode="before")
+    @classmethod
+    def _parse_csv_ids(cls, value: object) -> object:
+        if isinstance(value, str):
+            return {int(x.strip()) for x in value.split(",") if x.strip()}
+        return value
 
     @model_validator(mode="after")
     def _require_one_auth_method(self) -> Self:

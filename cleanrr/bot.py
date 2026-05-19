@@ -1,4 +1,5 @@
 import logging
+from datetime import timedelta
 
 from telegram import Update
 from telegram.ext import (
@@ -11,10 +12,13 @@ from telegram.ext import (
 
 from cleanrr.agent import Agent
 from cleanrr.config import Settings, export_sdk_credentials
+from cleanrr.identity import Identity
 
 logger = logging.getLogger(__name__)
 
 AGENT_KEY = "agent"
+IDENTITY_KEY = "identity"
+SETTINGS_KEY = "settings"
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -31,7 +35,9 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         "Commands:\n"
         "/start — sanity check\n"
-        "/help — this message\n\n"
+        "/help — this message\n"
+        "/link <code> — bind your Telegram account to an Overseerr user\n"
+        "/invite <overseerr_username> — admin only; issue a link code\n\n"
         "Send any message and I'll reply via Claude."
     )
 
@@ -50,13 +56,65 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     await update.message.reply_text(reply or "(no reply)")
 
 
+async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    settings: Settings = context.application.bot_data[SETTINGS_KEY]
+    if not settings.admin_telegram_ids:
+        await update.message.reply_text(
+            "/invite is disabled — set ADMIN_TELEGRAM_IDS in .env to enable it."
+        )
+        return
+    if update.effective_user.id not in settings.admin_telegram_ids:
+        await update.message.reply_text("/invite is admin-only.")
+        return
+
+    args = context.args or []
+    if len(args) != 1:
+        await update.message.reply_text("Usage: /invite <overseerr_username>")
+        return
+
+    overseerr_username = args[0].lstrip("@")
+    identity: Identity = context.application.bot_data[IDENTITY_KEY]
+    code = await identity.issue_code(overseerr_username)
+    await update.message.reply_text(
+        f"Link code for @{overseerr_username}: {code}\n"
+        f"Expires in {settings.link_code_ttl_hours}h. Share it; they DM me /link {code}."
+    )
+
+
+async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    args = context.args or []
+    if len(args) != 1:
+        await update.message.reply_text("Usage: /link <code>")
+        return
+
+    code = args[0].upper()
+    identity: Identity = context.application.bot_data[IDENTITY_KEY]
+    overseerr_username = await identity.redeem_code(code, update.effective_user.id)
+    if overseerr_username is None:
+        await update.message.reply_text(
+            "That code didn't work — wrong, expired, or already used. Ask the admin for a new one."
+        )
+        return
+
+    logger.info("linked telegram %s to overseerr @%s", update.effective_user.id, overseerr_username)
+    await update.message.reply_text(
+        f"Linked you to Overseerr user @{overseerr_username}. You're set."
+    )
+
+
 async def _on_startup(app: Application) -> None:
     await app.bot_data[AGENT_KEY].start()
+    await app.bot_data[IDENTITY_KEY].start()
     logger.info("cleanrr ready")
 
 
 async def _on_shutdown(app: Application) -> None:
     await app.bot_data[AGENT_KEY].stop()
+    await app.bot_data[IDENTITY_KEY].stop()
 
 
 def build_application(settings: Settings) -> Application:
@@ -67,13 +125,20 @@ def build_application(settings: Settings) -> Application:
         .post_shutdown(_on_shutdown)
         .build()
     )
+    app.bot_data[SETTINGS_KEY] = settings
     app.bot_data[AGENT_KEY] = Agent(
         model=settings.claude_model,
         system_prompt=settings.claude_system_prompt,
     )
+    app.bot_data[IDENTITY_KEY] = Identity(
+        db_path=settings.database_path,
+        code_ttl=timedelta(hours=settings.link_code_ttl_hours),
+    )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
+    app.add_handler(CommandHandler("invite", cmd_invite))
+    app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     return app
 
