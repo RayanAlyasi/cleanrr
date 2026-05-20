@@ -1,0 +1,30 @@
+{
+  "$schema": "https://json.schemastore.org/claude-code-settings.json",
+  "permissions": {
+    "allow": [
+      "Read(*)",
+      "Grep(*)",
+      "Glob(*)",
+      "Bash(git:*)",
+      "Bash(gh:*)",
+      "Bash(python -m ruff:*)",
+      "Bash(python -m pyright:*)",
+      "Bash(python -m pytest:*)",
+      "Bash(python -m bandit:*)",
+      "Bash(python -m pre_commit:*)"
+    ],
+    "ask": [
+      "Bash(rm:*)",
+      "Bash(docker:*)",
+      "Bash(pip install:*)"
+    ],
+    "deny": [
+      "Bash(rm -rf:*)",
+      "Bash(git push --force:*)"
+    ]
+  },
+  "env": {
+    "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  },
+  "respectGitignore": true
+}

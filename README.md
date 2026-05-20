@@ -28,11 +28,20 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Runs as a Docker service on the same network as your existing media stack.
 - Accepts Telegram DMs from any user, replies via Claude (model configurable — defaults to Sonnet).
 - Maintains a per-user conversation session so follow-up questions retain context.
+- Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts.
+
+## Commands
+
+| Command | Who | Purpose |
+| --- | --- | --- |
+| `/start` | Anyone | Sanity check; bot confirms it's online. |
+| `/help` | Anyone | List the commands available. |
+| `/link <code>` | Anyone | Redeem a one-time code to bind your Telegram account to an Overseerr user. |
+| `/invite <overseerr_username>` | Admin only | Issue a one-time link code for a friend. Requires `ADMIN_TELEGRAM_IDS` set. |
 
 ## What it doesn't do yet
 
 - No Sonarr / Radarr / Overseerr / qBittorrent tool calls (Phase 4).
-- No `/link` identity flow mapping Telegram users to Overseerr accounts (Phase 3).
 - No write actions or destructive operations (Phase 5).
 - No proactive notifications (Phase 6).
 
