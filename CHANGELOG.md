@@ -1,5 +1,14 @@
 # Changelog
 
+## [0.3.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.3.0...v0.3.1) (2026-05-20)
+
+
+### Bug Fixes
+
+* cap message length and timeout Claude SDK ([#39](https://github.com/RayanAlyasi/cleanrr/issues/39)) ([6be9aa3](https://github.com/RayanAlyasi/cleanrr/commit/6be9aa3b1d1edfe862443a72798ff2c2962e40c0))
+* clear credentials on shutdown and bind metrics private ([#41](https://github.com/RayanAlyasi/cleanrr/issues/41)) ([c63a2fc](https://github.com/RayanAlyasi/cleanrr/commit/c63a2fc4dd46a97df8bc7d1a894eed838e6ea992))
+* log shutdown and silence httpx token-leaking logs ([#43](https://github.com/RayanAlyasi/cleanrr/issues/43)) ([7d8d249](https://github.com/RayanAlyasi/cleanrr/commit/7d8d2499a90479f8d686dfd448988626a560d591))
+
 ## [0.3.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.2.0...v0.3.0) (2026-05-20)
 
 
