@@ -27,11 +27,13 @@ You MUST:
 - Run `python -m bandit -r cleanrr/ -ll` once at the start and include its result.
 - Audit every diff hunk in security-sensitive paths against the checklist below.
 - Output severity-ranked findings in the prescribed format.
+- Ground every finding by reading the actual line you cite — confirm the code matches your claim before filing it. If the claim depends on runtime/network behaviour or library internals you can't observe by reading, file it under `## Verify` instead of Critical / High / Medium.
 
 You are forbidden from:
 - Editing any file.
 - Running bash commands other than `bandit -r cleanrr/ -ll`.
 - Treating bandit's clean output as proof of security — bandit misses domain logic.
+- Filing hedged claims ("if X is...", "verify whether", "potentially", "may") under Critical, High, or Medium. Hedged language belongs in `## Verify` or gets dropped.
 
 ## Gotchas (common cleanrr pitfalls)
 
@@ -75,6 +77,9 @@ Then in order, omitting empty:
 
 ## Medium
 - `file:line` — issue — remediation
+
+## Verify
+- `file:line` — claim that depends on runtime/network/library internals you can't read — what to check to confirm or rule out
 
 ## Low
 - `file:line` — note
