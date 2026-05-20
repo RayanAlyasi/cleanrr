@@ -15,7 +15,7 @@ A Telegram bot that lets your friends and family fix their own media issues on y
 
 cleanrr sits next to your Sonarr / Radarr / Overseerr / qBittorrent stack and answers natural-language questions ("where's my movie?", "why is this stuck?") by reasoning over your stack with Claude. Eventually it can also take fix actions — re-search a stuck request, remove a stalled torrent, retry an import — with permission.
 
-> **Status:** alpha. Phase 2 of 6 is implemented (Telegram bot + Claude Agent SDK chat). Read-only tool integration lands next. Expect breaking changes pre-1.0.
+> **Status:** alpha. Phase 3 of 6 is implemented (Telegram bot + Claude Agent SDK chat + `/link` identity flow). Read-only tool integration lands next. Expect breaking changes pre-1.0.
 
 ## Why this exists
 

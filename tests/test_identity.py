@@ -94,12 +94,10 @@ async def test_start_creates_parent_directory(tmp_path: Path) -> None:
         await store.stop()
 
 
-def test_start_required_before_operations(tmp_path: Path) -> None:
+async def test_start_required_before_operations(tmp_path: Path) -> None:
     store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
     with pytest.raises(RuntimeError, match="start"):
-        import asyncio
-
-        asyncio.run(store.issue_code("alice"))
+        await store.issue_code("alice")
 
 
 async def test_issue_code_logs_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:

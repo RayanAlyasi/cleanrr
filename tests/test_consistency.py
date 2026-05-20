@@ -46,7 +46,8 @@ def _registered_commands() -> set[str]:
 
 def _readme_commands() -> set[str]:
     text = README.read_text(encoding="utf-8")
-    return set(re.findall(r"`/([a-z]+)`", text))
+    # Match rows inside the Commands table: | `/cmd <args>` | role | desc |
+    return set(re.findall(r"\|\s*`/([a-z]+)(?:\s[^`]*)?`\s*\|", text))
 
 
 def test_settings_fields_are_documented_in_env_example() -> None:
@@ -71,3 +72,10 @@ def test_registered_commands_are_documented_in_readme() -> None:
     documented = _readme_commands()
     missing = registered - documented
     assert not missing, f"Telegram commands not mentioned in README: {sorted(missing)}"
+
+
+def test_documented_commands_are_registered_in_bot() -> None:
+    documented = _readme_commands()
+    registered = _registered_commands()
+    missing = documented - registered
+    assert not missing, f"Commands in README table not registered in bot.py: {sorted(missing)}"

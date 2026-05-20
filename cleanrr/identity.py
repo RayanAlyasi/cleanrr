@@ -110,6 +110,7 @@ class Identity:
         metrics.linked_users.set(await self.user_count())
         return overseerr_username
 
+    # Used by Phase 4 tool handlers to resolve telegram_id → overseerr_username.
     async def get_link(self, telegram_user_id: int) -> str | None:
         if self._conn is None:
             raise RuntimeError("Identity.start() must be called before get_link()")
