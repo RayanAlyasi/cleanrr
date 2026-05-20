@@ -48,3 +48,37 @@ def test_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("CLAUDE_MODEL", "haiku")
 
     assert _settings().claude_model == "haiku"
+
+
+def test_claude_timeout_seconds_default_is_30(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.delenv("CLAUDE_TIMEOUT_SECONDS", raising=False)
+
+    assert _settings().claude_timeout_seconds == 30.0
+
+
+def test_telegram_max_message_chars_default_is_2000(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.delenv("TELEGRAM_MAX_MESSAGE_CHARS", raising=False)
+
+    assert _settings().telegram_max_message_chars == 2000
+
+
+def test_claude_timeout_seconds_rejects_zero(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("CLAUDE_TIMEOUT_SECONDS", "0")
+
+    with pytest.raises(ValidationError):
+        _settings()
+
+
+def test_telegram_max_message_chars_rejects_over_4096(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("TELEGRAM_MAX_MESSAGE_CHARS", "4097")
+
+    with pytest.raises(ValidationError):
+        _settings()

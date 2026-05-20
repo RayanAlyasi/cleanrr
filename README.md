@@ -79,9 +79,14 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `ANTHROPIC_API_KEY` | — | Auth option B. Pay-per-token. |
 | `CLAUDE_MODEL` | `sonnet` | `opus`, `sonnet`, `haiku`, or a full model ID. |
 | `CLAUDE_SYSTEM_PROMPT` | built-in | Override the bot's persona without touching code. |
+| `ADMIN_TELEGRAM_IDS` | — | Comma-separated Telegram user IDs allowed to run `/invite`. |
+| `DATABASE_PATH` | `data/cleanrr.db` | SQLite path for link codes and identity mappings. |
+| `LINK_CODE_TTL_HOURS` | `24` | How long link codes remain valid before expiring. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 | `METRICS_ENABLED` | `false` | Expose Prometheus `/metrics` on `METRICS_PORT`. |
 | `METRICS_PORT` | `9100` | Port for the Prometheus metrics HTTP endpoint. |
+| `CLAUDE_TIMEOUT_SECONDS` | `30` | Wall-clock seconds before giving up on a single Claude response. |
+| `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
 
 ### Metrics (optional)

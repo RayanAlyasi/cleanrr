@@ -61,6 +61,18 @@ class Settings(BaseSettings):
         description="Port for the Prometheus metrics HTTP endpoint.",
     )
 
+    claude_timeout_seconds: float = Field(
+        default=30.0,
+        gt=0,
+        description="Wall-clock timeout for a single Claude SDK request.",
+    )
+    telegram_max_message_chars: int = Field(
+        default=2000,
+        gt=0,
+        le=4096,
+        description="Reject Telegram messages longer than this many characters before forwarding to Claude.",  # noqa: E501
+    )
+
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def _parse_csv_ids(cls, value: object) -> object:
