@@ -9,6 +9,10 @@ services:
       - ./data:/app/data
     networks:
       - media
+    # Uncomment to expose Prometheus metrics endpoint to the host
+    # (also set METRICS_ENABLED=true in .env)
+    # ports:
+    #   - "9100:9100"
 
 networks:
   media:

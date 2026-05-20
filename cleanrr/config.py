@@ -50,6 +50,17 @@ class Settings(BaseSettings):
 
     log_level: str = Field(default="INFO")
 
+    metrics_enabled: bool = Field(
+        default=False,
+        description="Expose Prometheus metrics on METRICS_PORT.",
+    )
+    metrics_port: int = Field(
+        default=9100,
+        gt=0,
+        lt=65536,
+        description="Port for the Prometheus metrics HTTP endpoint.",
+    )
+
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod
     def _parse_csv_ids(cls, value: object) -> object:

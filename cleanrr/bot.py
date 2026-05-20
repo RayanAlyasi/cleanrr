@@ -1,4 +1,5 @@
 import logging
+import time
 from datetime import timedelta
 
 from telegram import Update
@@ -10,6 +11,7 @@ from telegram.ext import (
     filters,
 )
 
+import cleanrr.metrics as metrics
 from cleanrr.agent import Agent
 from cleanrr.config import Settings, export_sdk_credentials
 from cleanrr.identity import Identity
@@ -24,6 +26,7 @@ SETTINGS_KEY = "settings"
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
         return
+    metrics.telegram_messages_total.labels(kind="command", command="start").inc()
     await update.message.reply_text(
         "cleanrr is online. Ask me anything — fix actions land in a later phase."
     )
@@ -32,6 +35,7 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
         return
+    metrics.telegram_messages_total.labels(kind="command", command="help").inc()
     await update.message.reply_text(
         "Commands:\n"
         "/start — sanity check\n"
@@ -52,7 +56,20 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     text = update.message.text
 
     logger.info("message from %s (id=%s): %s", user.username, user.id, text[:80])
-    reply = await agent.respond(session_id=f"telegram_{user.id}", prompt=text)
+    metrics.telegram_messages_total.labels(kind="text", command="").inc()
+
+    start = time.perf_counter()
+    try:
+        reply = await agent.respond(session_id=f"telegram_{user.id}", prompt=text)
+    except Exception:
+        logger.exception("agent.respond failed")
+        metrics.claude_requests_total.labels(status="error").inc()
+        await update.message.reply_text(
+            "Sorry — I couldn't reach Claude just now. Try again in a moment."
+        )
+        return
+    metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
+    metrics.claude_requests_total.labels(status="success").inc()
     await update.message.reply_text(reply or "(no reply)")
 
 
@@ -108,7 +125,13 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
 async def _on_startup(app: Application) -> None:
     await app.bot_data[AGENT_KEY].start()
-    await app.bot_data[IDENTITY_KEY].start()
+    identity: Identity = app.bot_data[IDENTITY_KEY]
+    await identity.start()
+    settings: Settings = app.bot_data[SETTINGS_KEY]
+    if settings.metrics_enabled:
+        metrics.start(settings.metrics_port)
+        logger.info("metrics on :%d", settings.metrics_port)
+    metrics.linked_users.set(await identity.user_count())
     logger.info("cleanrr ready")
 
 

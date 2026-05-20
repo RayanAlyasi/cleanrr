@@ -1,3 +1,4 @@
+import logging
 from datetime import timedelta
 from pathlib import Path
 
@@ -99,3 +100,53 @@ def test_start_required_before_operations(tmp_path: Path) -> None:
         import asyncio
 
         asyncio.run(store.issue_code("alice"))
+
+
+async def test_issue_code_logs_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = await _store(tmp_path)
+    try:
+        with caplog.at_level(logging.INFO, logger="cleanrr.identity"):
+            code = await store.issue_code("alice")
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("issued link code for overseerr user @alice" in m for m in messages)
+        assert all(code not in m for m in messages)
+    finally:
+        await store.stop()
+
+
+async def test_redeem_code_logs_success(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = await _store(tmp_path)
+    try:
+        code = await store.issue_code("alice")
+        with caplog.at_level(logging.INFO, logger="cleanrr.identity"):
+            await store.redeem_code(code, telegram_user_id=12345)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("linked telegram 12345 to overseerr @alice" in m for m in messages)
+    finally:
+        await store.stop()
+
+
+async def test_redeem_code_logs_failure(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+    store = await _store(tmp_path)
+    try:
+        with caplog.at_level(logging.INFO, logger="cleanrr.identity"):
+            await store.redeem_code("NOPE-NOPE", telegram_user_id=12345)
+        messages = [r.getMessage() for r in caplog.records]
+        assert any("link code redemption failed for telegram 12345" in m for m in messages)
+    finally:
+        await store.stop()
+
+
+async def test_user_count(tmp_path: Path) -> None:
+    store = await _store(tmp_path)
+    try:
+        assert await store.user_count() == 0
+        code_a = await store.issue_code("alice")
+        code_b = await store.issue_code("bob")
+        assert await store.user_count() == 0
+        await store.redeem_code(code_a, telegram_user_id=111)
+        assert await store.user_count() == 1
+        await store.redeem_code(code_b, telegram_user_id=222)
+        assert await store.user_count() == 2
+    finally:
+        await store.stop()
