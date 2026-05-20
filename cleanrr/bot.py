@@ -206,7 +206,7 @@ def configure_logging(level: str) -> None:
     logging.getLogger("httpx").setLevel(logging.WARNING)
 
 
-def main() -> None:
+def main() -> None:  # pragma: no cover
     settings = Settings()  # type: ignore[call-arg]  # populated from .env at runtime
     configure_logging(settings.log_level)
     export_sdk_credentials(settings)
