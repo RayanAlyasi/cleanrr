@@ -36,6 +36,6 @@ linked_users = Gauge(
 )
 
 
-def start(port: int) -> None:
+def start(port: int, addr: str = "127.0.0.1") -> None:
     up.set(1)
-    start_http_server(port)
+    start_http_server(port, addr=addr)

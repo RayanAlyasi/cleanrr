@@ -82,3 +82,32 @@ def test_telegram_max_message_chars_rejects_over_4096(monkeypatch: pytest.Monkey
 
     with pytest.raises(ValidationError):
         _settings()
+
+
+def test_metrics_bind_address_default_is_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.delenv("METRICS_BIND_ADDRESS", raising=False)
+
+    assert str(_settings().metrics_bind_address) == "127.0.0.1"
+
+
+def test_clear_sdk_credentials_removes_both_env_vars(monkeypatch: pytest.MonkeyPatch) -> None:
+    import os
+
+    from cleanrr.config import clear_sdk_credentials
+
+    monkeypatch.setenv("CLAUDE_CODE_OAUTH_TOKEN", "fake-oauth")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+
+    clear_sdk_credentials()
+
+    assert "CLAUDE_CODE_OAUTH_TOKEN" not in os.environ
+    assert "ANTHROPIC_API_KEY" not in os.environ
+
+
+def test_clear_sdk_credentials_is_idempotent() -> None:
+    from cleanrr.config import clear_sdk_credentials
+
+    clear_sdk_credentials()
+    clear_sdk_credentials()

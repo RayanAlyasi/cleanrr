@@ -29,6 +29,6 @@ def test_metrics_have_expected_names_and_labels() -> None:
 
 def test_start_calls_prometheus_http_server() -> None:
     with patch("cleanrr.metrics.start_http_server") as mock_server:
-        metrics.start(9100)
-        mock_server.assert_called_once_with(9100)
+        metrics.start(9100, "127.0.0.1")
+        mock_server.assert_called_once_with(9100, addr="127.0.0.1")
         assert metrics.up._value.get() == 1.0  # type: ignore[attr-defined]
