@@ -154,6 +154,7 @@ async def _on_startup(app: Application) -> None:
 
 
 async def _on_shutdown(app: Application) -> None:
+    logger.info("shutting down")
     agent_error = None
     try:
         await app.bot_data[AGENT_KEY].stop()
@@ -201,6 +202,10 @@ def main() -> None:
         level=settings.log_level.upper(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
+    # httpx logs full request URLs at INFO. Telegram's API uses /bot<TOKEN>/method
+    # paths, so those INFO logs contain the bot token. Suppress the noise — errors
+    # still propagate at WARNING and above.
+    logging.getLogger("httpx").setLevel(logging.WARNING)
     export_sdk_credentials(settings)
 
     app = build_application(settings)

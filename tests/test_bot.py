@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-import os
+import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -129,7 +129,9 @@ async def test_on_message_returns_when_message_is_none() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_shutdown_clears_credentials_even_when_stop_fails() -> None:
+async def test_on_shutdown_clears_credentials_even_when_stop_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
     agent = MagicMock()
     agent.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
     identity = MagicMock()
@@ -138,10 +140,12 @@ async def test_on_shutdown_clears_credentials_even_when_stop_fails() -> None:
     app = MagicMock()
     app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity}
 
-    os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "fake-oauth"
-    os.environ["ANTHROPIC_API_KEY"] = "sk-fake"
+    with (
+        patch("cleanrr.bot.clear_sdk_credentials") as mock_clear,
+        caplog.at_level(logging.INFO, logger="cleanrr.bot"),
+        pytest.raises(RuntimeError, match="stop failed"),
+    ):
+        await _on_shutdown(app)
 
-    with patch("cleanrr.bot.clear_sdk_credentials") as mock_clear:
-        with pytest.raises(RuntimeError, match="stop failed"):
-            await _on_shutdown(app)
-        mock_clear.assert_called_once()
+    mock_clear.assert_called_once()
+    assert "shutting down" in caplog.text

@@ -30,6 +30,7 @@ data/
 *.db-journal
 *.sqlite
 *.sqlite3
+*.log
 
 # Build / dist
 build/
