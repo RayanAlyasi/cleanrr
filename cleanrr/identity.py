@@ -107,7 +107,7 @@ class Identity:
         await self._conn.commit()
         logger.info("linked telegram %s to overseerr @%s", telegram_user_id, overseerr_username)
         metrics.link_codes_redeemed_total.labels(status="success").inc()
-        metrics.linked_users.inc()
+        metrics.linked_users.set(await self.user_count())
         return overseerr_username
 
     async def get_link(self, telegram_user_id: int) -> str | None:

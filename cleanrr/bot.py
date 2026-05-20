@@ -76,6 +76,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_user is None:
         return
+    metrics.telegram_messages_total.labels(kind="command", command="invite").inc()
     settings: Settings = context.application.bot_data[SETTINGS_KEY]
     if not settings.admin_telegram_ids:
         await update.message.reply_text(
@@ -103,6 +104,7 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_user is None:
         return
+    metrics.telegram_messages_total.labels(kind="command", command="link").inc()
     args = context.args or []
     if len(args) != 1:
         await update.message.reply_text("Usage: /link <code>")
@@ -117,7 +119,6 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    logger.info("linked telegram %s to overseerr @%s", update.effective_user.id, overseerr_username)
     await update.message.reply_text(
         f"Linked you to Overseerr user @{overseerr_username}. You're set."
     )
@@ -130,8 +131,8 @@ async def _on_startup(app: Application) -> None:
     settings: Settings = app.bot_data[SETTINGS_KEY]
     if settings.metrics_enabled:
         metrics.start(settings.metrics_port)
+        metrics.linked_users.set(await identity.user_count())
         logger.info("metrics on :%d", settings.metrics_port)
-    metrics.linked_users.set(await identity.user_count())
     logger.info("cleanrr ready")
 
 
