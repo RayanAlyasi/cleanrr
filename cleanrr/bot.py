@@ -52,17 +52,34 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         return
 
     agent: Agent = context.application.bot_data[AGENT_KEY]
+    settings: Settings = context.application.bot_data[SETTINGS_KEY]
     user = update.effective_user
     text = update.message.text
 
-    logger.info("message from %s (id=%s): %s", user.username, user.id, text[:80])
     metrics.telegram_messages_total.labels(kind="text", command="").inc()
+
+    if len(text) > settings.telegram_max_message_chars:
+        limit = settings.telegram_max_message_chars
+        metrics.claude_requests_total.labels(status="rejected_too_long").inc()
+        await update.message.reply_text(
+            f"That message is over the {limit}-char limit — try splitting it up."
+        )
+        return
+
+    logger.info("message from %s (id=%s): %s", user.username, user.id, text[:80])
 
     start = time.perf_counter()
     try:
         reply = await agent.respond(session_id=f"telegram_{user.id}", prompt=text)
+    except TimeoutError:
+        logger.warning("agent.respond timed out after %.0fs", settings.claude_timeout_seconds)
+        metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
+        metrics.claude_requests_total.labels(status="timeout").inc()
+        await update.message.reply_text("Claude is taking too long — try again in a moment.")
+        return
     except Exception:
         logger.exception("agent.respond failed")
+        metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
         metrics.claude_requests_total.labels(status="error").inc()
         await update.message.reply_text(
             "Sorry — I couldn't reach Claude just now. Try again in a moment."
@@ -153,6 +170,7 @@ def build_application(settings: Settings) -> Application:
     app.bot_data[AGENT_KEY] = Agent(
         model=settings.claude_model,
         system_prompt=settings.claude_system_prompt,
+        timeout_seconds=settings.claude_timeout_seconds,
     )
     app.bot_data[IDENTITY_KEY] = Identity(
         db_path=settings.database_path,
