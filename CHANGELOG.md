@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.3.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.2.0...v0.3.0) (2026-05-20)
+
+
+### Features
+
+* add observability and graceful SDK error handling ([#36](https://github.com/RayanAlyasi/cleanrr/issues/36)) ([7a5a2f1](https://github.com/RayanAlyasi/cleanrr/commit/7a5a2f1091e2d50187f2b4bb1b0b3cddbe955d08))
+
+
+### Documentation
+
+* close gaps in python-style rule ([#34](https://github.com/RayanAlyasi/cleanrr/issues/34)) ([d9205c3](https://github.com/RayanAlyasi/cleanrr/commit/d9205c317fb8ff72371137ae41b46b2727d5bdee))
+
 ## [0.2.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.1.3...v0.2.0) (2026-05-19)
 
 
