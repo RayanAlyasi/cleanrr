@@ -1,10 +1,15 @@
 from __future__ import annotations
 
+import logging
 import secrets
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
 import aiosqlite
+
+import cleanrr.metrics as metrics
+
+logger = logging.getLogger(__name__)
 
 # Crockford-style alphabet — omits 0/O/1/I/L to keep codes unambiguous when
 # read aloud or transcribed from a phone screen.
@@ -67,6 +72,8 @@ class Identity:
             (code, overseerr_username, now, now + int(self._code_ttl.total_seconds())),
         )
         await self._conn.commit()
+        logger.info("issued link code for overseerr user @%s", overseerr_username)
+        metrics.link_codes_issued_total.inc()
         return code
 
     async def redeem_code(self, code: str, telegram_user_id: int) -> str | None:
@@ -80,6 +87,8 @@ class Identity:
         )
         row = await cursor.fetchone()
         if row is None:
+            logger.info("link code redemption failed for telegram %s", telegram_user_id)
+            metrics.link_codes_redeemed_total.labels(status="invalid").inc()
             return None
         overseerr_username = row[0]
         await self._conn.execute(
@@ -96,6 +105,9 @@ class Identity:
             (telegram_user_id, overseerr_username, now),
         )
         await self._conn.commit()
+        logger.info("linked telegram %s to overseerr @%s", telegram_user_id, overseerr_username)
+        metrics.link_codes_redeemed_total.labels(status="success").inc()
+        metrics.linked_users.set(await self.user_count())
         return overseerr_username
 
     async def get_link(self, telegram_user_id: int) -> str | None:
@@ -107,3 +119,10 @@ class Identity:
         )
         row = await cursor.fetchone()
         return row[0] if row else None
+
+    async def user_count(self) -> int:
+        if self._conn is None:
+            raise RuntimeError("Identity.start() must be called before user_count()")
+        cursor = await self._conn.execute("SELECT COUNT(*) FROM user_links")
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0

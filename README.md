@@ -80,7 +80,13 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `CLAUDE_MODEL` | `sonnet` | `opus`, `sonnet`, `haiku`, or a full model ID. |
 | `CLAUDE_SYSTEM_PROMPT` | built-in | Override the bot's persona without touching code. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
+| `METRICS_ENABLED` | `false` | Expose Prometheus `/metrics` on `METRICS_PORT`. |
+| `METRICS_PORT` | `9100` | Port for the Prometheus metrics HTTP endpoint. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
+
+### Metrics (optional)
+
+Set `METRICS_ENABLED=true` to expose a Prometheus `/metrics` endpoint on `METRICS_PORT` (default `9100`). Import `assets/grafana/cleanrr.json` into Grafana for a ready-made dashboard.
 
 ## Architecture
 
@@ -103,6 +109,8 @@ cleanrr/
 ├── __main__.py        # entrypoint (python -m cleanrr)
 ├── bot.py             # Telegram handlers + application wiring
 ├── agent.py           # ClaudeSDKClient wrapper with per-user sessions
+├── identity.py        # SQLite link-code store + Telegram↔Overseerr mapping
+├── metrics.py         # Prometheus metrics (opt-in)
 └── config.py          # pydantic-settings + auth validation
 ```
 
@@ -110,7 +118,7 @@ cleanrr/
 
 - [x] **Phase 1** — Project scaffold, Docker, echo bot
 - [x] **Phase 2** — Claude Agent SDK integration (chat works)
-- [ ] **Phase 3** — `/link` identity flow + SQLite mapping
+- [x] **Phase 3** — `/link` identity flow + SQLite mapping
 - [ ] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
 - [ ] **Phase 5** — Write tools behind in-chat confirmation
 - [ ] **Phase 6** — Proactive notifications + polish (Maintainerr / Decluttarr alongside, admin commands, per-user rate limits)
