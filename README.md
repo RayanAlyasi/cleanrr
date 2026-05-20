@@ -85,6 +85,7 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
 | `METRICS_ENABLED` | `false` | Expose Prometheus `/metrics` on `METRICS_PORT`. |
 | `METRICS_PORT` | `9100` | Port for the Prometheus metrics HTTP endpoint. |
+| `METRICS_BIND_ADDRESS` | `127.0.0.1` | Bind address for Prometheus `/metrics` endpoint. Set to `0.0.0.0` for multi-container scraping. |
 | `CLAUDE_TIMEOUT_SECONDS` | `30` | Wall-clock seconds before giving up on a single Claude response. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |

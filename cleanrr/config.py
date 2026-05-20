@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Self
 
-from pydantic import Field, SecretStr, field_validator, model_validator
+from pydantic import Field, IPvAnyAddress, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -60,6 +60,10 @@ class Settings(BaseSettings):
         lt=65536,
         description="Port for the Prometheus metrics HTTP endpoint.",
     )
+    metrics_bind_address: IPvAnyAddress = Field(
+        default="127.0.0.1",  # type: ignore[arg-type]
+        description="Bind address for metrics. Use 0.0.0.0 to allow scraping across containers.",
+    )
 
     claude_timeout_seconds: float = Field(
         default=30.0,
@@ -97,3 +101,13 @@ def export_sdk_credentials(settings: Settings) -> None:
         os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = settings.claude_code_oauth_token.get_secret_value()
     if settings.anthropic_api_key is not None:
         os.environ["ANTHROPIC_API_KEY"] = settings.anthropic_api_key.get_secret_value()
+
+
+def clear_sdk_credentials() -> None:
+    """Remove SDK auth tokens from os.environ on shutdown.
+
+    Limits the window in which live credentials sit in the process environment
+    after the bot stops accepting work.
+    """
+    os.environ.pop("CLAUDE_CODE_OAUTH_TOKEN", None)
+    os.environ.pop("ANTHROPIC_API_KEY", None)

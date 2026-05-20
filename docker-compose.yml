@@ -10,7 +10,7 @@ services:
     networks:
       - media
     # Uncomment to expose Prometheus metrics endpoint to the host
-    # (also set METRICS_ENABLED=true in .env)
+    # (also set METRICS_ENABLED=true and METRICS_BIND_ADDRESS=0.0.0.0 in .env)
     # ports:
     #   - "9100:9100"
 

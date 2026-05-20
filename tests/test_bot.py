@@ -1,11 +1,12 @@
 from __future__ import annotations
 
-from unittest.mock import AsyncMock, MagicMock
+import os
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from cleanrr import metrics
-from cleanrr.bot import AGENT_KEY, SETTINGS_KEY, on_message
+from cleanrr.bot import AGENT_KEY, IDENTITY_KEY, SETTINGS_KEY, _on_shutdown, on_message
 from cleanrr.config import Settings
 
 
@@ -125,3 +126,22 @@ async def test_on_message_returns_when_message_is_none() -> None:
     await on_message(update, context)
 
     agent.respond.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_shutdown_clears_credentials_even_when_stop_fails() -> None:
+    agent = MagicMock()
+    agent.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+    identity = MagicMock()
+    identity.stop = AsyncMock()
+
+    app = MagicMock()
+    app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity}
+
+    os.environ["CLAUDE_CODE_OAUTH_TOKEN"] = "fake-oauth"
+    os.environ["ANTHROPIC_API_KEY"] = "sk-fake"
+
+    with patch("cleanrr.bot.clear_sdk_credentials") as mock_clear:
+        with pytest.raises(RuntimeError, match="stop failed"):
+            await _on_shutdown(app)
+        mock_clear.assert_called_once()

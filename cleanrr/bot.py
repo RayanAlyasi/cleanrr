@@ -13,7 +13,7 @@ from telegram.ext import (
 
 import cleanrr.metrics as metrics
 from cleanrr.agent import Agent
-from cleanrr.config import Settings, export_sdk_credentials
+from cleanrr.config import Settings, clear_sdk_credentials, export_sdk_credentials
 from cleanrr.identity import Identity
 
 logger = logging.getLogger(__name__)
@@ -147,15 +147,24 @@ async def _on_startup(app: Application) -> None:
     await identity.start()
     settings: Settings = app.bot_data[SETTINGS_KEY]
     if settings.metrics_enabled:
-        metrics.start(settings.metrics_port)
+        metrics.start(settings.metrics_port, str(settings.metrics_bind_address))
         metrics.linked_users.set(await identity.user_count())
-        logger.info("metrics on :%d", settings.metrics_port)
+        logger.info("metrics on %s:%d", settings.metrics_bind_address, settings.metrics_port)
     logger.info("cleanrr ready")
 
 
 async def _on_shutdown(app: Application) -> None:
-    await app.bot_data[AGENT_KEY].stop()
-    await app.bot_data[IDENTITY_KEY].stop()
+    agent_error = None
+    try:
+        await app.bot_data[AGENT_KEY].stop()
+    except Exception as e:
+        agent_error = e
+    try:
+        await app.bot_data[IDENTITY_KEY].stop()
+    finally:
+        clear_sdk_credentials()
+        if agent_error is not None:
+            raise agent_error
 
 
 def build_application(settings: Settings) -> Application:
