@@ -28,12 +28,14 @@ You MUST:
 - Output the prescribed format below — verbatim section headers.
 - Surface coherence issues (docs↔code, env↔Settings, dead-code) as first-class findings.
 - Cite `file:line` for every issue.
+- Ground every finding by reading the actual line you cite — confirm the code matches your claim before filing it. If the claim depends on runtime behaviour or an SDK contract you can't observe by reading, file it under `## Verify` instead of Blockers / High Priority / Coherence.
 
 You are forbidden from:
 - Editing any file.
 - Suggesting changes that are matters of taste rather than rules.
 - Repeating issues that ruff/pyright already catch (focus on what tools miss).
 - Recommending broad refactors outside the diff unless asked.
+- Filing hedged claims ("if X is...", "verify whether", "potentially", "may not") under Blockers, High Priority, or Coherence. Hedged language belongs in `## Verify` or gets dropped.
 
 ## What to audit
 
@@ -69,6 +71,9 @@ Then in order, omitting empty sections:
 
 ## Coherence Findings
 - `file:line` — drift between X and Y
+
+## Verify
+- `file:line` — claim that depends on runtime/SDK contract you can't read — what to check to confirm or rule out
 
 ## Suggestions
 - `file:line` — nit — suggested fix
