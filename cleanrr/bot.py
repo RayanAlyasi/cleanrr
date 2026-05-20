@@ -195,17 +195,20 @@ def build_application(settings: Settings) -> Application:
     return app
 
 
-def main() -> None:
-    settings = Settings()  # type: ignore[call-arg]  # populated from .env at runtime
-
+def configure_logging(level: str) -> None:
     logging.basicConfig(
-        level=settings.log_level.upper(),
+        level=level.upper(),
         format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
     )
     # httpx logs full request URLs at INFO. Telegram's API uses /bot<TOKEN>/method
     # paths, so those INFO logs contain the bot token. Suppress the noise — errors
     # still propagate at WARNING and above.
     logging.getLogger("httpx").setLevel(logging.WARNING)
+
+
+def main() -> None:
+    settings = Settings()  # type: ignore[call-arg]  # populated from .env at runtime
+    configure_logging(settings.log_level)
     export_sdk_credentials(settings)
 
     app = build_application(settings)

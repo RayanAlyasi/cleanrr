@@ -6,7 +6,14 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cleanrr import metrics
-from cleanrr.bot import AGENT_KEY, IDENTITY_KEY, SETTINGS_KEY, _on_shutdown, on_message
+from cleanrr.bot import (
+    AGENT_KEY,
+    IDENTITY_KEY,
+    SETTINGS_KEY,
+    _on_shutdown,
+    configure_logging,
+    on_message,
+)
 from cleanrr.config import Settings
 
 
@@ -149,3 +156,9 @@ async def test_on_shutdown_clears_credentials_even_when_stop_fails(
 
     mock_clear.assert_called_once()
     assert "shutting down" in caplog.text
+
+
+def test_configure_logging_silences_httpx() -> None:
+    logging.getLogger("httpx").setLevel(logging.INFO)
+    configure_logging("INFO")
+    assert logging.getLogger("httpx").level >= logging.WARNING
