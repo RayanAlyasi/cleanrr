@@ -25,6 +25,7 @@ You MUST:
 You are forbidden from:
 - Editing any file in `cleanrr/`, `tests/`, or `.github/`.
 - Skipping the consistency-test gate.
+- Skipping the Opus final review.
 - Opening a PR before all required agents have approved.
 
 ## Workflow
@@ -78,7 +79,18 @@ Agent(subagent_type="cleanrr-security", description="Security audit",
 
 If verdict is `BLOCK RELEASE` or any `## Critical` finding → STOP and surface.
 
-### Step 6 — Push and open PR
+### Step 6 — Opus final review (intent vs literal)
+
+The specialized agents check their lanes (style, security). Opus checks whether the code does what the spec *meant*, not just what it said. This catches correctness bugs that survive a literal spec interpretation — gauge drift on upserts, missing instrumentation across symmetric paths, error-path observability gaps.
+
+```
+Agent(subagent_type="claude", model="opus", description="Final intent review",
+      prompt="Final correctness review of branch <branch>. Run `git diff main...HEAD` to see the change. Ask: does the code do what the spec MEANT, not just what it said? Look for counter/gauge drift, missing instrumentation across symmetric paths, error paths that skip observability the user would want, and any place where the spec's literal instruction doesn't achieve its stated goal. Do NOT re-flag style, naming, README drift, or security — the other agents covered those. Report `## Blockers`, `## Worth fixing`, `## Considered and dismissed`, `## Verdict`. Under 400 words.")
+```
+
+If verdict is `NEEDS REVISION` or any `## Blockers` exist → STOP and surface to the user. The user decides whether to apply fixes on this branch (recommended) or defer.
+
+### Step 7 — Push and open PR
 ```
 git push -u origin <branch>
 gh pr create --title "<conventional-commit subject>" --body "<spec summary + builder report + reviewer + security verdicts>"
@@ -94,4 +106,5 @@ Builder: <files changed, test count>
 Consistency: PASS
 Reviewer: <verdict>
 Security: <verdict or "not triggered">
+Opus final: <verdict>
 ```
