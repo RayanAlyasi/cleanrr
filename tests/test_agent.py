@@ -34,7 +34,9 @@ async def _fast_generator(text: str) -> AsyncIterator[AssistantMessage]:
 async def test_respond_raises_timeout_when_sdk_hangs() -> None:
     agent = Agent(
         identity=MagicMock(spec=Identity),
-        settings=Settings(telegram_bot_token=SecretStr("test"), anthropic_api_key="sk-test"),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
         timeout_seconds=0.1,
     )
     mock_client = AsyncMock()
@@ -51,7 +53,9 @@ async def test_respond_raises_timeout_when_sdk_hangs() -> None:
 async def test_respond_returns_normally_when_under_timeout() -> None:
     agent = Agent(
         identity=MagicMock(spec=Identity),
-        settings=Settings(telegram_bot_token=SecretStr("test"), anthropic_api_key="sk-test"),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
         timeout_seconds=5.0,
     )
     mock_client = AsyncMock()
@@ -69,7 +73,9 @@ async def test_respond_returns_normally_when_under_timeout() -> None:
 async def test_lock_releases_after_timeout() -> None:
     agent = Agent(
         identity=MagicMock(spec=Identity),
-        settings=Settings(telegram_bot_token=SecretStr("test"), anthropic_api_key="sk-test"),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
         timeout_seconds=0.1,
     )
     mock_client = AsyncMock()
