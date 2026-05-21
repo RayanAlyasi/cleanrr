@@ -189,6 +189,126 @@ async def test_list_my_requests_parse_error(
 
 
 @pytest.mark.asyncio
+async def test_list_my_requests_user_search_empty_results(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """200 OK with empty results list → user_not_found."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": []}
+    mock_client.get.return_value = user_response
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is False
+        assert "couldn't find" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_requests_http_500(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """HTTP 500 on requests fetch → http_error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 500
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is True
+        assert "couldn't fetch" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_requests_parse_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Malformed requests JSON → parse_error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.side_effect = ValueError("malformed")
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is True
+        assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_formats_declined_and_partial(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Status formatting covers declined (req=3) and partially_available (media=4)."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = {
+        "results": [
+            {"id": 1, "status": 3, "media": {"title": "Bad Movie", "status": 4}},
+        ]
+    }
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        text = result["content"][0]["text"]
+        assert "declined" in text
+        assert "partially available" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_unexpected_exception(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Unexpected exception in HTTP call → outer catch, http_error metric."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    mock_client.get.side_effect = RuntimeError("boom")
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is True
+        assert "error" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_list_my_requests_formatted_output(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
