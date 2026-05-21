@@ -67,6 +67,26 @@ def _format_status_label(req_status: int | None, media_status: int | None) -> st
     return ", ".join(status_parts) if status_parts else "unknown"
 
 
+def _user_id_error_response(tool_name: str, resolve_status: str) -> dict[str, Any]:
+    if resolve_status == "user_not_found":
+        cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="user_not_found").inc()
+        return text_result(
+            "Couldn't find your Overseerr account — admin may need to re-issue the link.",
+            is_error=False,
+        )
+    if resolve_status == "parse_error":
+        cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="parse_error").inc()
+        return text_result(
+            "Unexpected response format from Overseerr — try again later.",
+            is_error=True,
+        )
+    cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="http_error").inc()
+    return text_result(
+        "Couldn't reach Overseerr — try again in a moment.",
+        is_error=True,
+    )
+
+
 def build_tools(
     client: httpx.AsyncClient, identity: Identity, settings: Settings
 ) -> list[SdkMcpTool]:
@@ -117,30 +137,7 @@ def build_tools(
             base_url = str(settings.overseerr_url).rstrip("/")
             user_id, resolve_status = await _resolve_user_id(client, base_url, overseerr_username)
             if user_id is None:
-                if resolve_status == "user_not_found":
-                    cleanrr.metrics.tool_calls_total.labels(
-                        tool="list_my_requests", status="user_not_found"
-                    ).inc()
-                    return text_result(
-                        "Couldn't find your Overseerr account — "
-                        "admin may need to re-issue the link.",
-                        is_error=False,
-                    )
-                if resolve_status == "parse_error":
-                    cleanrr.metrics.tool_calls_total.labels(
-                        tool="list_my_requests", status="parse_error"
-                    ).inc()
-                    return text_result(
-                        "Unexpected response format from Overseerr — try again later.",
-                        is_error=True,
-                    )
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="list_my_requests", status="http_error"
-                ).inc()
-                return text_result(
-                    "Couldn't reach Overseerr — try again in a moment.",
-                    is_error=True,
-                )
+                return _user_id_error_response("list_my_requests", resolve_status)
 
             # 5. Fetch requests
             requests_resp = await client.get(
@@ -258,30 +255,7 @@ def build_tools(
             base_url = str(settings.overseerr_url).rstrip("/")
             user_id, resolve_status = await _resolve_user_id(client, base_url, overseerr_username)
             if user_id is None:
-                if resolve_status == "user_not_found":
-                    cleanrr.metrics.tool_calls_total.labels(
-                        tool="find_my_request", status="user_not_found"
-                    ).inc()
-                    return text_result(
-                        "Couldn't find your Overseerr account — "
-                        "admin may need to re-issue the link.",
-                        is_error=False,
-                    )
-                if resolve_status == "parse_error":
-                    cleanrr.metrics.tool_calls_total.labels(
-                        tool="find_my_request", status="parse_error"
-                    ).inc()
-                    return text_result(
-                        "Unexpected response format from Overseerr — try again later.",
-                        is_error=True,
-                    )
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="find_my_request", status="http_error"
-                ).inc()
-                return text_result(
-                    "Couldn't reach Overseerr — try again in a moment.",
-                    is_error=True,
-                )
+                return _user_id_error_response("find_my_request", resolve_status)
 
             requests_resp = await client.get(
                 f"{base_url}/api/v1/user/{user_id}/requests",
