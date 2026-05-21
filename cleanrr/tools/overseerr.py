@@ -40,7 +40,10 @@ async def _resolve_user_id(
     if not users:
         return None, "user_not_found"
 
-    return users[0]["id"], "ok"
+    try:
+        return users[0]["id"], "ok"
+    except (KeyError, TypeError):
+        return None, "parse_error"
 
 
 def _format_status_label(req_status: int | None, media_status: int | None) -> str:
@@ -322,8 +325,9 @@ def build_tools(
                 cleanrr.metrics.tool_calls_total.labels(
                     tool="find_my_request", status="no_match"
                 ).inc()
+                title_truncated = title_input[:50]
                 return text_result(
-                    f"I couldn't find a request matching '{title_input}'. "
+                    f"I couldn't find a request matching '{title_truncated}'. "
                     "Try /list to see all your requests.",
                     is_error=False,
                 )
