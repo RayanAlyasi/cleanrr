@@ -70,7 +70,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     start = time.perf_counter()
     try:
-        reply = await agent.respond(session_id=f"telegram_{user.id}", prompt=text)
+        reply = await agent.respond(telegram_user_id=user.id, prompt=text)
     except TimeoutError:
         logger.warning("agent.respond timed out after %.0fs", settings.claude_timeout_seconds)
         metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
@@ -156,6 +156,7 @@ async def _on_startup(app: Application) -> None:
 async def _on_shutdown(app: Application) -> None:
     logger.info("shutting down")
     agent_error = None
+    # Stop Agent first so any in-flight tool handlers can still resolve Identity.
     try:
         await app.bot_data[AGENT_KEY].stop()
     except Exception as e:
@@ -177,14 +178,17 @@ def build_application(settings: Settings) -> Application:
         .build()
     )
     app.bot_data[SETTINGS_KEY] = settings
+    identity = Identity(
+        db_path=settings.database_path,
+        code_ttl=timedelta(hours=settings.link_code_ttl_hours),
+    )
+    app.bot_data[IDENTITY_KEY] = identity
     app.bot_data[AGENT_KEY] = Agent(
+        identity=identity,
+        settings=settings,
         model=settings.claude_model,
         system_prompt=settings.claude_system_prompt,
         timeout_seconds=settings.claude_timeout_seconds,
-    )
-    app.bot_data[IDENTITY_KEY] = Identity(
-        db_path=settings.database_path,
-        code_ttl=timedelta(hours=settings.link_code_ttl_hours),
     )
 
     app.add_handler(CommandHandler("start", cmd_start))

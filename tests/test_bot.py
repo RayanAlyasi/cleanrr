@@ -115,7 +115,7 @@ async def test_on_message_success_path() -> None:
 
     await on_message(update, context)
 
-    agent.respond.assert_awaited_once_with(session_id="telegram_1", prompt="hello")
+    agent.respond.assert_awaited_once_with(telegram_user_id=1, prompt="hello")
     update.message.reply_text.assert_awaited_once_with("hi back")
     assert _counter_value({"status": "success"}) == before + 1
 
