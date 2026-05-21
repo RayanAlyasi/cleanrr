@@ -7,8 +7,11 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 from claude_agent_sdk import AssistantMessage, TextBlock
+from pydantic import SecretStr
 
 from cleanrr.agent import Agent
+from cleanrr.config import Settings
+from cleanrr.identity import Identity
 
 
 def _make_text_message(text: str) -> AssistantMessage:
@@ -29,7 +32,11 @@ async def _fast_generator(text: str) -> AsyncIterator[AssistantMessage]:
 
 @pytest.mark.asyncio
 async def test_respond_raises_timeout_when_sdk_hangs() -> None:
-    agent = Agent(timeout_seconds=0.1)
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(telegram_bot_token=SecretStr("test")),
+        timeout_seconds=0.1,
+    )
     mock_client = AsyncMock()
     mock_client.query = AsyncMock()
     mock_client.receive_response = lambda: _slow_generator()
@@ -37,26 +44,34 @@ async def test_respond_raises_timeout_when_sdk_hangs() -> None:
     agent._client = mock_client
 
     with pytest.raises(TimeoutError):
-        await agent.respond(session_id="user_1", prompt="hello")
+        await agent.respond(telegram_user_id=1, prompt="hello")
 
 
 @pytest.mark.asyncio
 async def test_respond_returns_normally_when_under_timeout() -> None:
-    agent = Agent(timeout_seconds=5.0)
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(telegram_bot_token=SecretStr("test")),
+        timeout_seconds=5.0,
+    )
     mock_client = AsyncMock()
     mock_client.query = AsyncMock()
     mock_client.receive_response = lambda: _fast_generator("hello back")
 
     agent._client = mock_client
 
-    result = await agent.respond(session_id="user_1", prompt="hello")
+    result = await agent.respond(telegram_user_id=1, prompt="hello")
 
     assert result == "hello back"
 
 
 @pytest.mark.asyncio
 async def test_lock_releases_after_timeout() -> None:
-    agent = Agent(timeout_seconds=0.1)
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(telegram_bot_token=SecretStr("test")),
+        timeout_seconds=0.1,
+    )
     mock_client = AsyncMock()
     mock_client.query = AsyncMock()
 
@@ -76,11 +91,11 @@ async def test_lock_releases_after_timeout() -> None:
     agent._client = mock_client
 
     with pytest.raises(TimeoutError):
-        await agent.respond(session_id="user_1", prompt="first")
+        await agent.respond(telegram_user_id=1, prompt="first")
 
     # After the timeout the lock must be released; second call must complete quickly.
     result = await asyncio.wait_for(
-        agent.respond(session_id="user_1", prompt="second"),
+        agent.respond(telegram_user_id=1, prompt="second"),
         timeout=5.0,
     )
     assert result == "second call"

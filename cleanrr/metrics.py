@@ -35,6 +35,12 @@ linked_users = Gauge(
     "Number of confirmed Telegram → Overseerr mappings",
 )
 
+tool_calls_total = Counter(
+    "cleanrr_tool_calls_total",
+    "Calls to in-process MCP tools",
+    ["tool", "status"],
+)
+
 
 def start(port: int, addr: str = "127.0.0.1") -> None:
     up.set(1)

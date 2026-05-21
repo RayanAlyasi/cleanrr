@@ -2,7 +2,7 @@ import os
 from pathlib import Path
 from typing import Self
 
-from pydantic import Field, IPvAnyAddress, SecretStr, field_validator, model_validator
+from pydantic import Field, HttpUrl, IPvAnyAddress, SecretStr, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -63,6 +63,20 @@ class Settings(BaseSettings):
     metrics_bind_address: IPvAnyAddress = Field(
         default="127.0.0.1",  # type: ignore[arg-type]
         description="Bind address for metrics. Use 0.0.0.0 to allow scraping across containers.",
+    )
+
+    overseerr_url: HttpUrl | None = Field(
+        default=None,
+        description="Base URL of your Overseerr instance (e.g. http://overseerr:5055)",
+    )
+    overseerr_api_key: SecretStr | None = Field(
+        default=None,
+        description="Overseerr API key (from Overseerr admin UI: Settings → General → API Key)",
+    )
+    overseerr_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="HTTP timeout for Overseerr API calls in seconds",
     )
 
     claude_timeout_seconds: float = Field(
