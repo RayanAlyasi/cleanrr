@@ -60,9 +60,10 @@ def build_tools(
             )
 
         try:
+            base_url = str(settings.overseerr_url).rstrip("/")
             # 4. Resolve username → user ID
             user_search = await client.get(
-                f"{settings.overseerr_url}/api/v1/user",
+                f"{base_url}/api/v1/user",
                 params={"q": overseerr_username, "take": 1},
             )
             if user_search.status_code == 404:
@@ -107,7 +108,7 @@ def build_tools(
 
             # 5. Fetch requests
             requests_resp = await client.get(
-                f"{settings.overseerr_url}/api/v1/user/{user_id}/requests",
+                f"{base_url}/api/v1/user/{user_id}/requests",
                 params={"take": 20},
             )
             if requests_resp.status_code != 200:
