@@ -892,6 +892,5 @@ async def test_find_request_increments_metric_on_every_exit(
     finally:
         current_telegram_user_id.reset(token)
 
-    assert any(
-        t == "find_my_request" and s == expected_status for t, s in recorded
-    ), f"Expected metric find_my_request/{expected_status}, got {recorded}"
+    matched = any(t == "find_my_request" and s == expected_status for t, s in recorded)
+    assert matched, f"Expected metric find_my_request/{expected_status}, got {recorded}"
