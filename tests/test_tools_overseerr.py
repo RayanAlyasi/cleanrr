@@ -8,7 +8,7 @@ import pytest
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
-from cleanrr.tools.overseerr import build_tools
+from cleanrr.tools.overseerr import _format_status_label, _resolve_user_id, build_tools
 
 
 def _settings(**overrides: object) -> Settings:
@@ -40,6 +40,95 @@ def settings() -> Settings:
     )
 
 
+# ---------------------------------------------------------------------------
+# Helper tests
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_success(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"id": 42}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 42
+    assert label == "ok"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_404(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 404
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "user_not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_empty_results(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": []}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "user_not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_500(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 500
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "http_error"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_malformed_json(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "parse_error"
+
+
+@pytest.mark.parametrize(
+    ("req_status", "media_status", "expected"),
+    [
+        (1, None, "pending"),
+        (2, 3, "approved, processing"),
+        (3, None, "declined"),
+        (2, 5, "approved, available"),
+        (None, None, "unknown"),
+        (1, 2, "pending, pending download"),
+        (2, 4, "approved, partially available"),
+        (2, 2, "approved, pending download"),
+        (3, 5, "declined, available"),
+        (None, 3, "processing"),
+    ],
+)
+def test_format_status_label_combinations(
+    req_status: int | None, media_status: int | None, expected: str
+) -> None:
+    assert _format_status_label(req_status, media_status) == expected
+
+
+# ---------------------------------------------------------------------------
+# list_my_requests tests (unchanged from before helper extraction)
+# ---------------------------------------------------------------------------
+
+
 @pytest.mark.asyncio
 async def test_list_my_requests_not_configured(
     mock_identity: MagicMock, mock_client: AsyncMock
@@ -47,7 +136,7 @@ async def test_list_my_requests_not_configured(
     """Tool returns 'not configured' when settings are missing."""
     unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
     tools = build_tools(mock_client, mock_identity, unconfigured)
-    assert len(tools) == 1
+    assert len(tools) == 2
 
     tool_fn = tools[0]
     token = current_telegram_user_id.set(1)
@@ -357,3 +446,451 @@ async def test_list_my_requests_formatted_output(
         assert "processing" in text
     finally:
         current_telegram_user_id.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# find_my_request integration tests
+# ---------------------------------------------------------------------------
+
+
+def _find_tool(tools: list) -> object:  # type: ignore[type-arg]
+    for t in tools:
+        if t.name == "find_my_request":
+            return t
+    raise AssertionError("find_my_request tool not found")
+
+
+def _make_requests_payload(*titles: str, req_status: int = 2, media_status: int = 5) -> dict:  # type: ignore[type-arg]
+    results = []
+    for title in titles:
+        results.append(
+            {
+                "id": len(results) + 1,
+                "status": req_status,
+                "media": {"title": title, "releaseYear": 2024, "status": media_status},
+            }
+        )
+    return {"results": results}
+
+
+@pytest.mark.asyncio
+async def test_find_request_not_configured(
+    mock_identity: MagicMock, mock_client: AsyncMock
+) -> None:
+    unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
+    tools = build_tools(mock_client, mock_identity, unconfigured)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is True
+        assert "configured" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_unlinked_user(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value=None)
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        assert "linked" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_empty_input(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "   "})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        assert "which title" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_context_missing(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Tool returns 'Internal error' when ContextVar is not set."""
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "internal error" in result["content"][0]["text"].lower()
+    assert mock_client.get.call_count == 0
+
+
+@pytest.mark.asyncio
+async def test_find_request_user_not_found(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """When user search returns 404, returns user_not_found error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    resp = MagicMock()
+    resp.status_code = 404
+    mock_client.get.return_value = resp
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        assert "couldn't find your overseerr account" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_user_parse_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """When user search returns malformed JSON, returns parse_error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    mock_client.get.return_value = resp
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is True
+        assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_user_http_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """When user search returns 500, returns http_error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    resp = MagicMock()
+    resp.status_code = 500
+    mock_client.get.return_value = resp
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is True
+        assert "couldn't reach" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_no_match(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = _make_requests_payload("Dune Part One", "Dune Part Two")
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "X-Files"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "couldn't find" in text.lower()
+        assert "X-Files" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_exact_match(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = _make_requests_payload(
+        "Dune Part One", req_status=2, media_status=5
+    )
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "dune part one"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "Dune Part One" in text
+        assert "available" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_fuzzy_match(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = _make_requests_payload(
+        "Dune Part Two", req_status=2, media_status=3
+    )
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "dune part 2"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "Dune Part Two" in text
+        assert "processing" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_year_stripped(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Dune Part Two", "releaseYear": 2024, "status": 5},
+            }
+        ]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune Part Two (2024)"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "Dune Part Two" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_multi_match(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = _make_requests_payload("Dune Part One", "Dune Part Two")
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "possible matches" in text.lower()
+        assert "Dune Part One" in text
+        assert "Dune Part Two" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_http_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 500
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is True
+        assert "couldn't reach" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_requests_parse_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """When requests fetch returns malformed JSON, returns parse_error."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.side_effect = ValueError("bad json")
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+        assert result["is_error"] is True
+        assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("title", "mock_setup", "expected_status"),
+    [
+        ("", None, "empty_input"),
+        ("Dune", "no_match", "no_match"),
+        ("Dune", "multi_match", "multi_match"),
+        ("Dune Part One", "single_match", "success"),
+    ],
+)
+async def test_find_request_increments_metric_on_every_exit(
+    mock_identity: MagicMock,
+    mock_client: AsyncMock,
+    settings: Settings,
+    monkeypatch: pytest.MonkeyPatch,
+    title: str,
+    mock_setup: str | None,
+    expected_status: str,
+) -> None:
+    import cleanrr.metrics as metrics_module
+
+    recorded: list[tuple[str, str]] = []
+
+    class _FakeCounter:
+        def labels(self, tool: str, status: str) -> _FakeCounter:
+            recorded.append((tool, status))
+            return self
+
+        def inc(self) -> None:
+            pass
+
+    monkeypatch.setattr(metrics_module, "tool_calls_total", _FakeCounter())
+
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    if mock_setup == "no_match":
+        user_resp = MagicMock()
+        user_resp.status_code = 200
+        user_resp.json.return_value = {"results": [{"id": 99}]}
+        req_resp = MagicMock()
+        req_resp.status_code = 200
+        req_resp.json.return_value = _make_requests_payload("Something Else Entirely")
+        mock_client.get.side_effect = [user_resp, req_resp]
+    elif mock_setup == "multi_match":
+        user_resp = MagicMock()
+        user_resp.status_code = 200
+        user_resp.json.return_value = {"results": [{"id": 99}]}
+        req_resp = MagicMock()
+        req_resp.status_code = 200
+        req_resp.json.return_value = _make_requests_payload("Dune Part One", "Dune Part Two")
+        mock_client.get.side_effect = [user_resp, req_resp]
+    elif mock_setup == "single_match":
+        user_resp = MagicMock()
+        user_resp.status_code = 200
+        user_resp.json.return_value = {"results": [{"id": 99}]}
+        req_resp = MagicMock()
+        req_resp.status_code = 200
+        req_resp.json.return_value = _make_requests_payload("Dune Part One")
+        mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        await tool_fn.handler({"title": title})  # type: ignore[union-attr]
+    finally:
+        current_telegram_user_id.reset(token)
+
+    matched = any(t == "find_my_request" and s == expected_status for t, s in recorded)
+    assert matched, f"Expected metric find_my_request/{expected_status}, got {recorded}"

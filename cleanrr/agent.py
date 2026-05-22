@@ -35,10 +35,11 @@ Tools are available to look up request status. Diagnosis and fix
 actions land in later phases. Don't promise actions you can't take.
 
 ## Tools available
-You have one tool: `list_my_requests`. Use it whenever someone asks
-about their Overseerr requests — "where's my movie?", "what did I
-request?", "is my show downloading?", or any variation. Always call
-the tool rather than guessing.\
+- `list_my_requests` — show the user's full Overseerr request list. Use when they ask
+  for everything ("what did I request?", "show me my requests").
+- `find_my_request` — look up ONE specific title. Use when they ask about a single
+  movie/show ("is Dune ready?", "what's the status of Severance?"). Pass the title
+  exactly as the user wrote it.
 """
 
 
