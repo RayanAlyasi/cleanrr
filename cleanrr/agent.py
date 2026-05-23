@@ -16,6 +16,7 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
+from cleanrr.tools.sonarr import build_tools as build_sonarr_tools
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -40,6 +41,9 @@ actions land in later phases. Don't promise actions you can't take.
 - `find_my_request` — look up ONE specific title. Use when they ask about a single
   movie/show ("is Dune ready?", "what's the status of Severance?"). Pass the title
   exactly as the user wrote it.
+- `get_show_status` — look up TV show download status in Sonarr (episodes ready,
+  downloading). Use when they ask about show progress ("is The Bear downloading?",
+  "how many episodes are ready?").
 """
 
 
@@ -83,11 +87,33 @@ class Agent:
                 )
             )
 
+        sonarr_client: httpx.AsyncClient | None = None
+        if settings.sonarr_url is not None and settings.sonarr_api_key is not None:
+            sonarr_client = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    headers={"X-Api-Key": settings.sonarr_api_key.get_secret_value()},
+                    timeout=settings.sonarr_timeout_seconds,
+                )
+            )
+
         tools = (
             build_overseerr_tools(overseerr_client, self._identity, settings)
             if overseerr_client is not None
             else []
         )
+
+        if (
+            sonarr_client is not None
+            and overseerr_client is not None
+            and settings.sonarr_url is not None
+            and settings.sonarr_api_key is not None
+            and settings.overseerr_url is not None
+            and settings.overseerr_api_key is not None
+        ):
+            sonarr_tools = build_sonarr_tools(
+                sonarr_client, overseerr_client, self._identity, settings
+            )
+            tools.extend(sonarr_tools)
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}

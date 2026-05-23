@@ -8,7 +8,9 @@ import pytest
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
-from cleanrr.tools.overseerr import _format_status_label, _resolve_user_id, build_tools
+from cleanrr.tools._status_label import _format_status_label
+from cleanrr.tools._user_request import _resolve_user_id
+from cleanrr.tools.overseerr import build_tools
 
 
 def _settings(**overrides: object) -> Settings:

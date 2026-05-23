@@ -79,6 +79,20 @@ class Settings(BaseSettings):
         description="HTTP timeout for Overseerr API calls in seconds",
     )
 
+    sonarr_url: HttpUrl | None = Field(
+        default=None,
+        description="Base URL of your Sonarr instance (e.g. http://sonarr:8989)",
+    )
+    sonarr_api_key: SecretStr | None = Field(
+        default=None,
+        description="Sonarr API key (from Sonarr admin UI: Settings → General → API Key)",
+    )
+    sonarr_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="HTTP timeout for Sonarr API calls in seconds",
+    )
+
     claude_timeout_seconds: float = Field(
         default=30.0,
         gt=0,
