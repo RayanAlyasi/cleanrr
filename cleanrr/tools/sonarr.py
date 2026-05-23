@@ -8,7 +8,7 @@ import cleanrr.metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._results import text_result
-from cleanrr.tools._user_request import find_user_request
+from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
 logger = logging.getLogger(__name__)
 
@@ -31,7 +31,6 @@ def build_tools(
     async def get_show_status(args: dict[str, Any]) -> dict[str, Any]:
         title_input = args.get("title", "").strip()
 
-        # Check if Sonarr configured
         if settings.sonarr_url is None or settings.sonarr_api_key is None:
             cleanrr.metrics.tool_calls_total.labels(
                 tool="get_show_status", status="sonarr_not_configured"
@@ -41,75 +40,14 @@ def build_tools(
                 is_error=True,
             )
 
-        # Call find_user_request helper
         lookup = await find_user_request(overseerr_client, identity, settings, title_input)
 
-        # Map lookup status to metric label; don't increment here if status=="ok"
-        metric_status = lookup.status
-        if metric_status == "ok":
-            pass  # Will increment after we determine final disposition
-        else:
+        error_response = render_lookup_error(lookup, title_input)
+        if error_response is not None:
             cleanrr.metrics.tool_calls_total.labels(
-                tool="get_show_status", status=metric_status
+                tool="get_show_status", status=lookup.status
             ).inc()
-            # Pass through non-ok statuses
-            if lookup.status == "not_configured":
-                return text_result(
-                    "Overseerr isn't configured yet — ask the admin to set "
-                    "OVERSEERR_URL and OVERSEERR_API_KEY.",
-                    is_error=True,
-                )
-            if lookup.status == "context_missing":
-                return text_result("Internal error — couldn't identify caller.", is_error=True)
-            if lookup.status == "unlinked_user":
-                return text_result(
-                    "You haven't linked your Overseerr account yet. Send /link <code> "
-                    "first (ask the admin for a code).",
-                    is_error=False,
-                )
-            if lookup.status == "empty_input":
-                return text_result(
-                    "Tell me which title you're asking about.",
-                    is_error=False,
-                )
-            if lookup.status == "user_not_found":
-                return text_result(
-                    "Couldn't find your Overseerr account — admin may need to re-issue the link.",
-                    is_error=False,
-                )
-            if lookup.status == "parse_error":
-                return text_result(
-                    "Unexpected response format from Overseerr — try again later.",
-                    is_error=True,
-                )
-            if lookup.status == "http_error":
-                return text_result(
-                    "Couldn't reach Overseerr — try again in a moment.",
-                    is_error=True,
-                )
-            if lookup.status == "no_match":
-                return text_result(
-                    f"I couldn't find a request matching '{title_input[:50]}'. "
-                    "Try /list to see all your requests.",
-                    is_error=False,
-                )
-            if lookup.status == "multi_match":
-                if lookup.candidates is None:
-                    cleanrr.metrics.tool_calls_total.labels(
-                        tool="get_show_status", status="http_error"
-                    ).inc()
-                    return text_result("An error occurred — try again later.", is_error=True)
-                count = len(lookup.candidates)
-                disambiguation_lines = [f"Found {count} possible matches — which one?"]
-                for req in lookup.candidates:
-                    media = req.get("media", {})
-                    title = media.get("title") or media.get("name")
-                    year = media.get("releaseYear")
-                    if year:
-                        disambiguation_lines.append(f"- {title} ({year})")
-                    else:
-                        disambiguation_lines.append(f"- {title}")
-                return text_result("\n".join(disambiguation_lines), is_error=False)
+            return error_response
 
         if lookup.request is None:
             cleanrr.metrics.tool_calls_total.labels(
@@ -127,7 +65,7 @@ def build_tools(
                 tool="get_show_status", status="not_a_show"
             ).inc()
             return text_result(
-                "That looks like a movie — Radarr support lands in the next phase.",
+                "That looks like a movie — try asking about its download status.",
                 is_error=False,
             )
 

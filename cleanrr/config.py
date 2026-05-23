@@ -93,6 +93,20 @@ class Settings(BaseSettings):
         description="HTTP timeout for Sonarr API calls in seconds",
     )
 
+    radarr_url: HttpUrl | None = Field(
+        default=None,
+        description="Base URL of your Radarr instance (e.g. http://radarr:7878)",
+    )
+    radarr_api_key: SecretStr | None = Field(
+        default=None,
+        description="Radarr API key (from Radarr admin UI: Settings → General → API Key)",
+    )
+    radarr_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="HTTP timeout for Radarr API calls in seconds",
+    )
+
     claude_timeout_seconds: float = Field(
         default=30.0,
         gt=0,

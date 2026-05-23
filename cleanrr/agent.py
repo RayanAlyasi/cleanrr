@@ -16,6 +16,7 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
+from cleanrr.tools.radarr import build_tools as build_radarr_tools
 from cleanrr.tools.sonarr import build_tools as build_sonarr_tools
 
 DEFAULT_SYSTEM_PROMPT = """\
@@ -44,6 +45,9 @@ actions land in later phases. Don't promise actions you can't take.
 - `get_show_status` — look up TV show download status in Sonarr (episodes ready,
   downloading). Use when they ask about show progress ("is The Bear downloading?",
   "how many episodes are ready?").
+- `get_movie_status` — look up movie download status in Radarr (downloaded vs downloading
+  vs nothing yet). Use when they ask about a specific film ("is Dune ready?", "where's
+  my Batman movie?").
 """
 
 
@@ -96,6 +100,15 @@ class Agent:
                 )
             )
 
+        radarr_client: httpx.AsyncClient | None = None
+        if settings.radarr_url is not None and settings.radarr_api_key is not None:
+            radarr_client = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    headers={"X-Api-Key": settings.radarr_api_key.get_secret_value()},
+                    timeout=settings.radarr_timeout_seconds,
+                )
+            )
+
         tools = (
             build_overseerr_tools(overseerr_client, self._identity, settings)
             if overseerr_client is not None
@@ -114,6 +127,19 @@ class Agent:
                 sonarr_client, overseerr_client, self._identity, settings
             )
             tools.extend(sonarr_tools)
+
+        if (
+            radarr_client is not None
+            and overseerr_client is not None
+            and settings.radarr_url is not None
+            and settings.radarr_api_key is not None
+            and settings.overseerr_url is not None
+            and settings.overseerr_api_key is not None
+        ):
+            radarr_tools = build_radarr_tools(
+                radarr_client, overseerr_client, self._identity, settings
+            )
+            tools.extend(radarr_tools)
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}

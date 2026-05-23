@@ -159,6 +159,80 @@ async def test_start_skips_sonarr_tools_when_overseerr_missing(
     await agent.stop()
 
 
+@pytest.mark.asyncio
+async def test_start_registers_radarr_tools_when_both_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent.start() registers get_movie_status when both Radarr and Overseerr configured."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+        radarr_url=HttpUrl("http://radarr:7878"),
+        radarr_api_key=SecretStr("radarr-key"),
+    )
+    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    await agent.start()
+
+    opts = captured_options["options"]
+    assert "get_movie_status" in opts.allowed_tools  # type: ignore[union-attr]
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_start_skips_radarr_tools_when_overseerr_missing(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Agent.start() skips Radarr tools when Overseerr is not configured."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        radarr_url=HttpUrl("http://radarr:7878"),
+        radarr_api_key=SecretStr("radarr-key"),
+    )
+    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    await agent.start()
+
+    opts = captured_options["options"]
+    assert "get_movie_status" not in opts.allowed_tools  # type: ignore[union-attr]
+
+    await agent.stop()
+
+
 def _make_text_message(text: str) -> AssistantMessage:
     block = TextBlock(text=text)
     msg = MagicMock(spec=AssistantMessage)
