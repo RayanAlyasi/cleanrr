@@ -31,6 +31,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts.
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
 - TV show status via Sonarr — see what's downloaded and what's downloading.
+- Movie status via Radarr — see what's downloaded and what's downloading.
 
 ## Commands
 
@@ -43,7 +44,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 
 ## What it doesn't do yet
 
-- No Radarr / qBittorrent tool calls yet (Phases 4.4-4.5).
+- No qBittorrent tool calls yet (Phase 4.5).
 - No write actions or destructive operations (Phase 5).
 - No proactive notifications (Phase 6).
 
