@@ -10,7 +10,7 @@ from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
-from cleanrr.tools._user_request import _resolve_user_id, find_user_request
+from cleanrr.tools._user_request import _resolve_user_id, find_user_request, render_lookup_error
 
 logger = logging.getLogger(__name__)
 
@@ -164,59 +164,9 @@ def build_tools(
         metric_status = "success" if lookup.status == "ok" else lookup.status
         cleanrr.metrics.tool_calls_total.labels(tool="find_my_request", status=metric_status).inc()
 
-        if lookup.status == "not_configured":
-            return text_result(
-                "Overseerr isn't configured yet — ask the admin to set "
-                "OVERSEERR_URL and OVERSEERR_API_KEY.",
-                is_error=True,
-            )
-        if lookup.status == "context_missing":
-            return text_result("Internal error — couldn't identify caller.", is_error=True)
-        if lookup.status == "unlinked_user":
-            return text_result(
-                "You haven't linked your Overseerr account yet. Send /link <code> "
-                "first (ask the admin for a code).",
-                is_error=False,
-            )
-        if lookup.status == "empty_input":
-            return text_result(
-                "Tell me which title you're asking about.",
-                is_error=False,
-            )
-        if lookup.status == "user_not_found":
-            return text_result(
-                "Couldn't find your Overseerr account — admin may need to re-issue the link.",
-                is_error=False,
-            )
-        if lookup.status == "parse_error":
-            return text_result(
-                "Unexpected response format from Overseerr — try again later.",
-                is_error=True,
-            )
-        if lookup.status == "http_error":
-            return text_result(
-                "Couldn't reach Overseerr — try again in a moment.",
-                is_error=True,
-            )
-        if lookup.status == "no_match":
-            return text_result(
-                f"I couldn't find a request matching '{title_input[:50]}'. "
-                "Try /list to see all your requests.",
-                is_error=False,
-            )
-        if lookup.status == "multi_match":
-            if lookup.candidates is None:
-                return text_result("An error occurred — try again later.", is_error=True)
-            disambiguation_lines = [f"Found {len(lookup.candidates)} possible matches — which one?"]
-            for req in lookup.candidates:
-                media = req.get("media", {})
-                title = media.get("title") or media.get("name")
-                year = media.get("releaseYear")
-                if year:
-                    disambiguation_lines.append(f"- {title} ({year})")
-                else:
-                    disambiguation_lines.append(f"- {title}")
-            return text_result("\n".join(disambiguation_lines), is_error=False)
+        error_response = render_lookup_error(lookup, title_input)
+        if error_response is not None:
+            return error_response
 
         if lookup.request is None:
             return text_result(
