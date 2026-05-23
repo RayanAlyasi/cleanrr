@@ -381,3 +381,415 @@ async def test_get_show_status_queue_fetch_fails_still_returns_series(
         assert "10 of 20 episodes ready" in result["content"][0]["text"]
     finally:
         current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_overseerr_not_configured(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+) -> None:
+    settings = _settings(overseerr_url=None, overseerr_api_key=None)
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Overseerr isn't configured" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_context_missing(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Internal error" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_unlinked_user(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value=None)
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert "linked your Overseerr account" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_empty_input(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "  "})
+        assert "which title" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_user_not_found(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_resp = MagicMock()
+    user_resp.status_code = 404
+    mock_overseerr_client.get.return_value = user_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert "Couldn't find your Overseerr account" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_overseerr_http_error(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_resp = MagicMock()
+    user_resp.status_code = 500
+    mock_overseerr_client.get.return_value = user_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert "Couldn't reach Overseerr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_overseerr_parse_error(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.side_effect = ValueError("bad json")
+    mock_overseerr_client.get.return_value = user_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert "Unexpected response format from Overseerr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_no_match(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "Severance", "status": 5, "tvdbId": 1}}
+        ]
+    }
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "Completely Different Show"})
+        assert "couldn't find a request" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_multi_match(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Dune Part One", "status": 5, "tvdbId": 1},
+            },
+            {
+                "id": 2,
+                "status": 2,
+                "media": {"title": "Dune Part Two", "status": 5, "tvdbId": 2},
+            },
+        ]
+    }
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "Dune"})
+        text = result["content"][0]["text"]
+        assert "possible matches" in text
+        assert "Dune Part One" in text
+        assert "Dune Part Two" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_series_http_error(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 500
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.return_value = series_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert result["is_error"] is True
+        assert "Couldn't reach Sonarr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_series_parse_error(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.side_effect = ValueError("bad json")
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.return_value = series_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert result["is_error"] is True
+        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_series_not_dict(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = ["not a dict"]
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.return_value = series_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert result["is_error"] is True
+        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_series_missing_id(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = [{"title": "The Bear"}]
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.return_value = series_resp
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert result["is_error"] is True
+        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_sonarr_http_exception(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.side_effect = httpx.ConnectError("connection refused")
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "The Bear"})
+        assert result["is_error"] is True
+        assert "error occurred" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
