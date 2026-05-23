@@ -127,7 +127,7 @@ def build_tools(
                 tool="get_show_status", status="not_a_show"
             ).inc()
             return text_result(
-                "That looks like a movie — Radarr support lands in the next phase.",
+                "That looks like a movie — try asking about its download status.",
                 is_error=False,
             )
 
