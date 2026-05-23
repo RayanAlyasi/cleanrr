@@ -332,6 +332,43 @@ async def test_get_movie_status_not_a_movie(
 
 
 @pytest.mark.asyncio
+async def test_get_movie_status_tmdb_id_wrong_type(
+    mock_radarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    """tmdbId present but not int → parse_error."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Dune", "status": 5, "tmdbId": "not-an-int"},
+            }
+        ]
+    }
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    get_movie_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_movie_status.handler({"title": "Dune"})
+        assert result["is_error"] is True
+        assert "Unexpected response format" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_get_movie_status_not_in_radarr(
     mock_radarr_client: AsyncMock,
     mock_overseerr_client: AsyncMock,

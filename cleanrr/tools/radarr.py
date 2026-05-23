@@ -115,13 +115,21 @@ def build_tools(
 
         media = lookup.request.get("media", {})
         tmdb_id = media.get("tmdbId")
-        if not tmdb_id:
+        if tmdb_id is None:
             cleanrr.metrics.tool_calls_total.labels(
                 tool="get_movie_status", status="not_a_movie"
             ).inc()
             return text_result(
                 "That looks like a TV show — try asking about its episodes.",
                 is_error=False,
+            )
+        if not isinstance(tmdb_id, int):
+            cleanrr.metrics.tool_calls_total.labels(
+                tool="get_movie_status", status="parse_error"
+            ).inc()
+            return text_result(
+                "Unexpected response format from Overseerr — try again later.",
+                is_error=True,
             )
 
         try:
