@@ -74,8 +74,7 @@ def build_tools(
                 )
             if lookup.status == "user_not_found":
                 return text_result(
-                    "Couldn't find your Overseerr account — admin may need to "
-                    "re-issue the link.",
+                    "Couldn't find your Overseerr account — admin may need to re-issue the link.",
                     is_error=False,
                 )
             if lookup.status == "parse_error":
