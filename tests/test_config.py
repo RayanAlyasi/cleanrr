@@ -50,12 +50,21 @@ def test_model_override(monkeypatch: pytest.MonkeyPatch) -> None:
     assert _settings().claude_model == "haiku"
 
 
-def test_claude_timeout_seconds_default_is_30(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_claude_timeout_seconds_default(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
     monkeypatch.delenv("CLAUDE_TIMEOUT_SECONDS", raising=False)
 
-    assert _settings().claude_timeout_seconds == 30.0
+    assert _settings().claude_timeout_seconds == 120.0
+
+
+def test_confirmation_ttl_must_be_under_claude_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("CLAUDE_TIMEOUT_SECONDS", "30")
+    monkeypatch.setenv("CONFIRMATION_TTL_SECONDS", "60")
+    with pytest.raises(ValueError, match="CONFIRMATION_TTL_SECONDS"):
+        _settings()
 
 
 def test_telegram_max_message_chars_default_is_2000(monkeypatch: pytest.MonkeyPatch) -> None:

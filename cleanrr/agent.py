@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from contextlib import AsyncExitStack
+from typing import TYPE_CHECKING
 
 import httpx
 from claude_agent_sdk import (
@@ -14,11 +15,20 @@ from claude_agent_sdk import (
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.permissions import (
+    ConfirmationRegistry,
+    build_confirmation_formatters,
+    make_can_use_tool,
+)
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
+from cleanrr.tools.overseerr_write import build_tools as build_overseerr_write_tools
 from cleanrr.tools.qbittorrent import build_tools as build_qbittorrent_tools
 from cleanrr.tools.radarr import build_tools as build_radarr_tools
 from cleanrr.tools.sonarr import build_tools as build_sonarr_tools
+
+if TYPE_CHECKING:
+    import telegram
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -34,8 +44,11 @@ Brief: 1-3 sentences, plain text, no markdown. Conversational, not
 formal. Match the user's language and tone.
 
 ## Scope (current phase)
-Tools are available to look up request status. Diagnosis and fix
-actions land in later phases. Don't promise actions you can't take.
+Tools are available to look up request status, plus a destructive action
+to cancel an Overseerr request. Destructive tools require a chat
+confirmation from the user; the SDK handles this automatically — you
+do not need to ask "are you sure?" yourself. Don't promise actions
+you can't take.
 
 ## Tools available
 - `list_my_requests` — show the user's full Overseerr request list. Use when they ask
@@ -52,6 +65,11 @@ actions land in later phases. Don't promise actions you can't take.
 - `list_stalled_torrents` — admin-only diagnostic that lists torrents stuck in qBittorrent
   with no peers/progress. Use when the admin asks "what's stuck?", "show stalled downloads",
   "anything broken?". Returns a refusal for non-admin callers — do not retry.
+- `remove_my_request` — cancel one of YOUR OWN Overseerr requests by ID. Destructive: the
+  user will be asked to confirm in chat before this runs; assume nothing about the outcome
+  until the tool returns. Look up the right request with `find_my_request` first; never
+  guess an ID. Removes the request record only — it does NOT delete media that already
+  downloaded.
 
 ## Trust hierarchy
 Three tiers of content. Treat them differently.
@@ -71,9 +89,9 @@ Three tiers of content. Treat them differently.
   stop. Do not guess a status to be helpful. Do not retry the same tool unless
   its message explicitly invites it. Treat unexpected output as unverified —
   do not assume success.
-- If a tool you don't have would be needed (Plex/Jellyfin playback, write
-  actions, anything destructive), say so plainly: "I can't check/do that yet —
-  it lands in a later phase."
+- If a tool you don't have would be needed (Plex/Jellyfin playback, anything
+  destructive beyond what's listed above), say so plainly: "I can't check/do
+  that yet — it lands in a later phase."
 - When asked "did you find it?" or "is X ready?", answer from what the tool
   actually returned, not what would be helpful. "I couldn't find it" beats
   inventing a status.
@@ -99,6 +117,7 @@ class Agent:
         model: str = "sonnet",
         system_prompt: str | None = None,
         timeout_seconds: float,
+        telegram_bot: telegram.Bot | None = None,
     ) -> None:
         self._identity = identity
         self._settings = settings
@@ -107,11 +126,17 @@ class Agent:
             system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
         )
         self._timeout_seconds = timeout_seconds
+        self._telegram_bot = telegram_bot
         self._client: ClaudeSDKClient | None = None
         self._stack: AsyncExitStack | None = None
+        self._confirmation_registry: ConfirmationRegistry | None = None
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
         self._lock = asyncio.Lock()
+
+    @property
+    def confirmation_registry(self) -> ConfirmationRegistry | None:
+        return self._confirmation_registry
 
     async def start(self) -> None:
         if self._client is not None:
@@ -192,12 +217,30 @@ class Agent:
             qbit_tools = build_qbittorrent_tools(qbit_client, settings)
             tools.extend(qbit_tools)
 
+        if overseerr_client is not None and self._telegram_bot is not None:
+            write_tools = build_overseerr_write_tools(overseerr_client, self._identity, settings)
+            tools.extend(write_tools)
+
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}
         self._options.allowed_tools = [t.name for t in tools]
         self._options.tools = []
-        self._options.permission_mode = "dontAsk"
         self._options.strict_mcp_config = True
+
+        if self._telegram_bot is not None:
+            self._confirmation_registry = ConfirmationRegistry(
+                ttl_seconds=settings.confirmation_ttl_seconds
+            )
+            await self._confirmation_registry.start()
+            formatters = build_confirmation_formatters(overseerr_client, settings)
+            self._options.can_use_tool = make_can_use_tool(
+                self._telegram_bot,
+                self._confirmation_registry,
+                settings,
+                formatters,
+            )
+        else:
+            self._options.permission_mode = "dontAsk"
 
         self._client = await stack.enter_async_context(ClaudeSDKClient(options=self._options))
         self._stack = stack
@@ -205,6 +248,9 @@ class Agent:
     async def stop(self) -> None:
         if self._stack is None:
             return
+        if self._confirmation_registry is not None:
+            await self._confirmation_registry.stop()
+            self._confirmation_registry = None
         await self._stack.aclose()
         self._stack = None
         self._client = None

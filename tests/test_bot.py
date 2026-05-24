@@ -17,14 +17,16 @@ from cleanrr.bot import (
     cmd_link,
     cmd_start,
     configure_logging,
+    on_confirmation,
     on_message,
 )
 from cleanrr.config import Settings
+from cleanrr.permissions import ConfirmationRegistry
 
 
 def _make_settings(
     max_chars: int = 2000,
-    timeout: float = 30.0,
+    timeout: float = 120.0,
     admin_ids: set[int] | None = None,
     metrics_enabled: bool = False,
     metrics_port: int = 9100,
@@ -483,3 +485,109 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
 
     mock_metrics_start.assert_called_once_with(9200, str(settings.metrics_bind_address))
     mock_linked_users.set.assert_called_once_with(7)
+
+
+# ---------------------------------------------------------------------------
+# on_confirmation
+# ---------------------------------------------------------------------------
+
+
+def _make_callback_update(callback_data: str, user_id: int = 42) -> tuple[MagicMock, AsyncMock]:
+    update = MagicMock()
+    update.callback_query = MagicMock()
+    update.callback_query.data = callback_data
+    update.callback_query.answer = AsyncMock()
+    update.callback_query.edit_message_text = AsyncMock()
+    update.effective_user = MagicMock()
+    update.effective_user.id = user_id
+    return update, update.callback_query.answer
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_resolves_pending_for_right_user() -> None:
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    answer.assert_awaited()
+    assert pending.future.result() is True
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_rejects_wrong_user() -> None:
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, _ = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=999)
+    await on_confirmation(update, context)
+
+    assert not pending.future.done()
+    # Telegram only honors the first answerCallbackQuery; a prior vanilla
+    # answer() would swallow this alert. So insist this is the ONLY call.
+    update.callback_query.answer.assert_called_once_with(
+        "This confirmation isn't for you.", show_alert=True
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_handles_expired_id() -> None:
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, _ = _make_callback_update("cleanrr:confirm:doesnotexist:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    update.callback_query.edit_message_text.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_ignores_malformed_callback_data() -> None:
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, _ = _make_callback_update("garbage:wrong:format", user_id=42)
+    await on_confirmation(update, context)
+
+    update.callback_query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_no_op_when_registry_unavailable() -> None:
+    agent = MagicMock()
+    agent.confirmation_registry = None
+    context = _make_context(agent, _make_settings())
+
+    update, _ = _make_callback_update("cleanrr:confirm:abc:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    update.callback_query.edit_message_text.assert_not_awaited()

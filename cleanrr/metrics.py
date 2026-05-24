@@ -41,6 +41,12 @@ tool_calls_total = Counter(
     ["tool", "status"],
 )
 
+destructive_actions_total = Counter(
+    "cleanrr_destructive_actions_total",
+    "Destructive tool invocations by tool and confirmation outcome",
+    ["tool", "outcome"],
+)
+
 
 def start(port: int, addr: str = "127.0.0.1") -> None:
     up.set(1)

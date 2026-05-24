@@ -126,15 +126,20 @@ class Settings(BaseSettings):
     )
 
     claude_timeout_seconds: float = Field(
-        default=30.0,
+        default=120.0,
         gt=0,
-        description="Wall-clock timeout for a single Claude SDK request.",
+        description="Wall-clock timeout for a single Claude SDK request. Must exceed CONFIRMATION_TTL_SECONDS so confirmation prompts can complete before the agent times out.",  # noqa: E501
     )
     telegram_max_message_chars: int = Field(
         default=2000,
         gt=0,
         le=4096,
         description="Reject Telegram messages longer than this many characters before forwarding to Claude.",  # noqa: E501
+    )
+    confirmation_ttl_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description="How long a destructive-action confirmation prompt waits for a click before timing out and denying.",  # noqa: E501
     )
 
     @field_validator("admin_telegram_ids", mode="before")
@@ -148,6 +153,19 @@ class Settings(BaseSettings):
     def _require_one_auth_method(self) -> Self:
         if self.claude_code_oauth_token is None and self.anthropic_api_key is None:
             raise ValueError("Set either CLAUDE_CODE_OAUTH_TOKEN or ANTHROPIC_API_KEY in .env")
+        return self
+
+    @model_validator(mode="after")
+    def _claude_timeout_exceeds_confirmation_ttl(self) -> Self:
+        # The agent.respond outer wait_for wraps every SDK call including the
+        # can_use_tool suspension. If claude_timeout fires first, the user sees
+        # "Claude is taking too long" instead of the real "confirmation timed out"
+        # and the destructive_actions_total{outcome=timed_out} metric stays dark.
+        if self.claude_timeout_seconds <= self.confirmation_ttl_seconds:
+            raise ValueError(
+                f"CLAUDE_TIMEOUT_SECONDS ({self.claude_timeout_seconds}) must be greater "
+                f"than CONFIRMATION_TTL_SECONDS ({self.confirmation_ttl_seconds})."
+            )
         return self
 
 
