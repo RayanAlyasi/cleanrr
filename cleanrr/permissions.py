@@ -15,7 +15,7 @@ import secrets
 import time
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
 import httpx
 from claude_agent_sdk import (
@@ -31,6 +31,8 @@ from cleanrr.config import Settings
 from cleanrr.tools._context import current_telegram_user_id
 
 logger = logging.getLogger(__name__)
+
+Outcome = Literal["confirmed", "denied", "timed_out"]
 
 WRITE_TOOLS: frozenset[str] = frozenset({"remove_my_request"})
 
@@ -53,6 +55,10 @@ class PendingConfirmation:
     created_at: float
     prompt_message_id: int
     future: asyncio.Future[bool] = field(repr=False)
+    # Outcome label is stamped by whichever path resolves the future, so a race
+    # between the sweeper and wait_for can't misclassify a timeout as a user
+    # cancel (the future's bool result is the same in both cases).
+    outcome: Outcome | None = None
 
 
 class ConfirmationRegistry:
@@ -167,6 +173,7 @@ class ConfirmationRegistry:
                 return False
             if pending.future.done():
                 return False
+            pending.outcome = "confirmed" if allowed else "denied"
             pending.future.set_result(allowed)
             del self._entries[confirmation_id]
         return True
@@ -176,6 +183,7 @@ class ConfirmationRegistry:
         async with self._lock:
             pending = self._entries.pop(confirmation_id, None)
         if pending is not None and not pending.future.done():
+            pending.outcome = "timed_out"
             pending.future.set_result(False)
 
     async def _sweep_loop(self) -> None:
@@ -200,6 +208,7 @@ class ConfirmationRegistry:
         for cid in expired_ids:
             pending = self._entries.pop(cid)
             if not pending.future.done():
+                pending.outcome = "timed_out"
                 pending.future.set_result(False)
 
 
@@ -360,23 +369,23 @@ def make_can_use_tool(
             )
         except TimeoutError:
             await registry.timeout(pending.confirmation_id)
-            metrics.destructive_actions_total.labels(tool=bare_name, outcome="timed_out").inc()
-            await _edit_outcome(
-                telegram_bot, telegram_user_id, sent_message.message_id, "Timed out."
-            )
-            return PermissionResultDeny(message="confirmation timed out")
-
-        outcome = "confirmed" if allowed else "denied"
+            allowed = False
+        # Read outcome from the entry rather than inferring from the bool. The
+        # sweeper and timeout() also resolve to False, but the outcome distinguishes
+        # them from a user-cancel click.
+        outcome: Outcome = pending.outcome or "timed_out"
         metrics.destructive_actions_total.labels(tool=bare_name, outcome=outcome).inc()
-        await _edit_outcome(
-            telegram_bot,
-            telegram_user_id,
-            sent_message.message_id,
-            "Confirmed." if allowed else "Cancelled.",
-        )
+        outcome_text = {
+            "confirmed": "Confirmed.",
+            "denied": "Cancelled.",
+            "timed_out": "Timed out.",
+        }[outcome]
+        await _edit_outcome(telegram_bot, telegram_user_id, sent_message.message_id, outcome_text)
         if allowed:
             return PermissionResultAllow(updated_input=input_data)
-        return PermissionResultDeny(message="user declined")
+        return PermissionResultDeny(
+            message="confirmation timed out" if outcome == "timed_out" else "user declined"
+        )
 
     return can_use_tool
 

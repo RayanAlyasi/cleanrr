@@ -26,7 +26,7 @@ from cleanrr.permissions import ConfirmationRegistry
 
 def _make_settings(
     max_chars: int = 2000,
-    timeout: float = 30.0,
+    timeout: float = 120.0,
     admin_ids: set[int] | None = None,
     metrics_enabled: bool = False,
     metrics_port: int = 9100,
