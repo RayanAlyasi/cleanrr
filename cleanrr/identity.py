@@ -80,10 +80,14 @@ class Identity:
         if self._conn is None:
             raise RuntimeError("Identity.start() must be called before redeem_code()")
         now = _now_ts()
+        # Atomic check-and-consume: a concurrent /link with the same code can't
+        # win this UPDATE twice — the second attempt's WHERE clause fails on
+        # consumed_at IS NULL. SELECT-then-UPDATE would race here.
         cursor = await self._conn.execute(
-            "SELECT overseerr_username FROM link_codes"
-            " WHERE code = ? AND consumed_at IS NULL AND expires_at > ?",
-            (code, now),
+            "UPDATE link_codes SET consumed_at = ?"
+            " WHERE code = ? AND consumed_at IS NULL AND expires_at > ?"
+            " RETURNING overseerr_username",
+            (now, code, now),
         )
         row = await cursor.fetchone()
         if row is None:
@@ -91,10 +95,6 @@ class Identity:
             metrics.link_codes_redeemed_total.labels(status="invalid").inc()
             return None
         overseerr_username = row[0]
-        await self._conn.execute(
-            "UPDATE link_codes SET consumed_at = ? WHERE code = ?",
-            (now, code),
-        )
         # ON CONFLICT replaces the previous mapping so re-linking just works.
         await self._conn.execute(
             "INSERT INTO user_links (telegram_user_id, overseerr_username, linked_at)"

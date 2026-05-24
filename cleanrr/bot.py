@@ -66,7 +66,9 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    logger.info("message from %s (id=%s): %s", user.username, user.id, text[:80])
+    # username is user-controlled; strip non-printable chars to prevent log injection.
+    safe_username = "".join(c for c in (user.username or "?") if c.isprintable())[:32]
+    logger.info("message from %s (id=%s): %s", safe_username, user.id, text[:80])
 
     start = time.perf_counter()
     try:

@@ -186,7 +186,9 @@ def render_lookup_error(lookup: UserRequestLookup, title_input: str) -> dict[str
         lines = [f"Found {len(lookup.candidates)} possible matches — which one?"]
         for req in lookup.candidates:
             media = req.get("media", {})
-            title = media.get("title") or media.get("name")
+            # API-supplied title is untrusted; bound it so a hostile/long value
+            # can't blow past Telegram's 4096-char reply limit.
+            title = str(media.get("title") or media.get("name") or "?")[:80]
             year = media.get("releaseYear")
             if year:
                 lines.append(f"- {title} ({year})")
