@@ -548,7 +548,9 @@ async def test_on_confirmation_rejects_wrong_user() -> None:
     await on_confirmation(update, context)
 
     assert not pending.future.done()
-    update.callback_query.answer.assert_any_call(
+    # Telegram only honors the first answerCallbackQuery; a prior vanilla
+    # answer() would swallow this alert. So insist this is the ONLY call.
+    update.callback_query.answer.assert_called_once_with(
         "This confirmation isn't for you.", show_alert=True
     )
 
