@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.4.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.3.1...v0.4.0) (2026-05-24)
+
+
+### Features
+
+* add fuzzy-match Overseerr request lookup ([#46](https://github.com/RayanAlyasi/cleanrr/issues/46)) ([5c216d7](https://github.com/RayanAlyasi/cleanrr/commit/5c216d7258e294421468223cdc0a18cc6c986b66))
+* add MCP tool foundation + Overseerr list_my_requests ([#44](https://github.com/RayanAlyasi/cleanrr/issues/44)) ([3d732c5](https://github.com/RayanAlyasi/cleanrr/commit/3d732c533dfc1b4f5ca413f9e153eb4c9c270b53))
+* add qBittorrent stalled-torrents tool ([#50](https://github.com/RayanAlyasi/cleanrr/issues/50)) ([2f38f22](https://github.com/RayanAlyasi/cleanrr/commit/2f38f2219505857dcab192a93ef699bf6bd653a6))
+* add Radarr movie status tool ([#49](https://github.com/RayanAlyasi/cleanrr/issues/49)) ([85c0ae1](https://github.com/RayanAlyasi/cleanrr/commit/85c0ae1d39b77ad8f8b6ab023bddddbc5cde43d3))
+* add Sonarr TV show status tool ([#48](https://github.com/RayanAlyasi/cleanrr/issues/48)) ([f3ae19e](https://github.com/RayanAlyasi/cleanrr/commit/f3ae19e9f1e7f4b14cfb9a393eb6f1c02d85359f))
+* harden runtime prompt with trust hierarchy ([606bf49](https://github.com/RayanAlyasi/cleanrr/commit/606bf49576f2a71b46c58b378dd74f0267e19fbb))
+
 ## [0.3.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.3.0...v0.3.1) (2026-05-20)
 
 
