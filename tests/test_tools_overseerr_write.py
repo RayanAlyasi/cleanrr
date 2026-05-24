@@ -249,3 +249,152 @@ async def test_bad_request_id_returns_error(
 
     assert result["is_error"] is True
     mock_client.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_user_resolve_404_returns_friendly_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_search_404 = MagicMock()
+    user_search_404.status_code = 404
+    mock_client.get.return_value = user_search_404
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert "couldn't find" in result["content"][0]["text"].lower()
+    mock_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_user_resolve_5xx_returns_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    user_search_500 = MagicMock()
+    user_search_500.status_code = 500
+    mock_client.get.return_value = user_search_500
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    mock_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_http_error_returns_friendly_message(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    mock_client.get.side_effect = [
+        _user_search_response(user_id=42),
+        httpx.RequestError("boom"),
+    ]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    mock_client.delete.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_get_5xx_returns_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    bad_resp = MagicMock()
+    bad_resp.status_code = 500
+    mock_client.get.side_effect = [_user_search_response(user_id=42), bad_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "500" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
+async def test_get_malformed_json_returns_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    bad_json = MagicMock()
+    bad_json.status_code = 200
+    bad_json.json.side_effect = ValueError("bad json")
+    mock_client.get.side_effect = [_user_search_response(user_id=42), bad_json]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "format" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_http_error_returns_friendly_message(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    mock_client.get.side_effect = [
+        _user_search_response(user_id=42),
+        _request_get_response(owner_id=42),
+    ]
+    mock_client.delete.side_effect = httpx.RequestError("boom")
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+
+
+@pytest.mark.asyncio
+async def test_missing_contextvar_returns_internal_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    # Don't set the contextvar — simulate the tool firing outside a request scope.
+    result = await tool_fn.handler({"request_id": 7})
+
+    assert result["is_error"] is True
+    assert "internal error" in result["content"][0]["text"].lower()
+    mock_client.get.assert_not_called()

@@ -433,3 +433,137 @@ def test_telegram_bot_param_is_not_required_to_make_callback() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
     cb = make_can_use_tool(bot, reg, settings, formatters={})
     assert callable(cb)
+
+
+@pytest.mark.asyncio
+async def test_can_use_tool_denies_when_contextvar_not_set() -> None:
+    """can_use_tool must deny gracefully if the per-request contextvar wasn't set."""
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(bot, reg, settings, formatters={})
+
+    # Note: NOT setting current_telegram_user_id
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+
+    assert isinstance(result, PermissionResultDeny)
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_can_use_tool_denies_when_send_message_fails() -> None:
+    from telegram.error import TelegramError as _TelegramError
+
+    bot = _make_bot()
+    bot.send_message = AsyncMock(side_effect=_TelegramError("network"))
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(bot, reg, settings, formatters={})
+
+    before = _counter("remove_my_request", "denied")
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert isinstance(result, PermissionResultDeny)
+    assert _counter("remove_my_request", "denied") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_sweeper_actively_evicts_expired_entries() -> None:
+    """The background sweep loop must evict entries without anyone calling get().
+
+    Sweep interval has a 1.0s floor regardless of TTL, so the test must wait
+    out at least one full interval after expiry.
+    """
+    reg = ConfirmationRegistry(ttl_seconds=0.05)
+    await reg.start()
+    try:
+        cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
+        assert cid is not None
+        pending = await reg.register(
+            confirmation_id=cid,
+            telegram_user_id=1,
+            tool_name="remove_my_request",
+            tool_args={},
+            prompt_message_id=1,
+        )
+        await asyncio.sleep(1.3)
+        assert pending.future.done()
+        assert pending.outcome == "timed_out"
+    finally:
+        await reg.stop()
+
+
+@pytest.mark.asyncio
+async def test_edit_outcome_failure_is_swallowed() -> None:
+    """If editing the confirmation message fails, can_use_tool still returns cleanly."""
+    from telegram.error import TelegramError as _TelegramError
+
+    bot = _make_bot()
+    bot.edit_message_text = AsyncMock(side_effect=_TelegramError("can't edit"))
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(bot, reg, settings, formatters={})
+
+    token = current_telegram_user_id.set(42)
+
+    async def _confirm_after_send() -> None:
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            async with reg._lock:  # type: ignore[attr-defined]
+                if reg._entries:  # type: ignore[attr-defined]
+                    cid = next(iter(reg._entries))  # type: ignore[attr-defined]
+                    break
+        else:
+            raise AssertionError("no pending appeared")
+        await reg.resolve(cid, telegram_user_id=42, allowed=True)
+
+    try:
+        results = await asyncio.gather(
+            cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+            _confirm_after_send(),
+        )
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert isinstance(results[0], PermissionResultAllow)
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_false_when_id_unknown() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    ok = await reg.resolve("nonexistent", telegram_user_id=1, allowed=True)
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_resolve_returns_false_when_future_already_done() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    # Resolve once via direct future-set (simulating a race).
+    pending.future.set_result(True)
+    ok = await reg.resolve(cid, telegram_user_id=42, allowed=False)
+    assert ok is False
+
+
+@pytest.mark.asyncio
+async def test_timeout_on_unknown_id_is_noop() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    # Should not raise
+    await reg.timeout("nonexistent")
+
+
+def test_ttl_seconds_property_returns_configured_value() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=42.5)
+    assert reg.ttl_seconds == 42.5
