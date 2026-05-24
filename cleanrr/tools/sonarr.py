@@ -124,6 +124,8 @@ def build_tools(
                     "Unexpected response format from Sonarr — try again later.",
                     is_error=True,
                 )
+            # API-supplied title is untrusted; bound length before interpolation.
+            title = str(title)[:80]
             stats = series.get("statistics", {})
 
             total = stats.get("episodeCount", 0)

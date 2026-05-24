@@ -137,6 +137,9 @@ def build_tools(
                     is_error=True,
                 )
 
+            # API-supplied title is untrusted; bound length before interpolation.
+            title = str(title)[:80]
+
             queued = 0
             try:
                 queue_resp = await radarr_client.get(

@@ -186,7 +186,9 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
 
         lines: list[str] = [f"Stalled torrents ({len(stalled)}):"]
         for t in stalled:
-            name = t.get("name", "unknown")
+            # Torrent name is set by the torrent's creator — untrusted input;
+            # truncate to keep the aggregate reply within Telegram's message limit.
+            name = str(t.get("name", "unknown"))[:80]
             state = t.get("state", "unknown")
             size_bytes = t.get("size", 0)
             progress = t.get("progress", 0.0)
