@@ -136,6 +136,11 @@ class Settings(BaseSettings):
         le=4096,
         description="Reject Telegram messages longer than this many characters before forwarding to Claude.",  # noqa: E501
     )
+    confirmation_ttl_seconds: float = Field(
+        default=60.0,
+        gt=0,
+        description="How long a destructive-action confirmation prompt waits for a click before timing out and denying.",  # noqa: E501
+    )
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod

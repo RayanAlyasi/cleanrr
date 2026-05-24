@@ -5,6 +5,7 @@ from datetime import timedelta
 from telegram import Update
 from telegram.ext import (
     Application,
+    CallbackQueryHandler,
     CommandHandler,
     ContextTypes,
     MessageHandler,
@@ -120,6 +121,47 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+_CALLBACK_PREFIX = "cleanrr:confirm:"
+
+
+async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    query = update.callback_query
+    if query is None or query.data is None or update.effective_user is None:
+        return
+    await query.answer()
+
+    parts = query.data.split(":")
+    if len(parts) != 4 or f"{parts[0]}:{parts[1]}:" != _CALLBACK_PREFIX:
+        logger.warning("malformed confirmation callback_data")
+        return
+    confirmation_id, decision = parts[2], parts[3]
+    if decision not in ("yes", "no"):
+        return
+
+    agent: Agent = context.application.bot_data[AGENT_KEY]
+    registry = agent.confirmation_registry
+    if registry is None:
+        return
+
+    pending = await registry.get(confirmation_id)
+    if pending is None:
+        try:
+            await query.edit_message_text("This confirmation has expired.")
+        except Exception:
+            logger.debug("couldn't edit expired confirmation message", exc_info=True)
+        return
+
+    if update.effective_user.id != pending.telegram_user_id:
+        await query.answer("This confirmation isn't for you.", show_alert=True)
+        return
+
+    await registry.resolve(
+        confirmation_id,
+        telegram_user_id=update.effective_user.id,
+        allowed=(decision == "yes"),
+    )
+
+
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None or update.effective_user is None:
         return
@@ -191,12 +233,14 @@ def build_application(settings: Settings) -> Application:
         model=settings.claude_model,
         system_prompt=settings.claude_system_prompt,
         timeout_seconds=settings.claude_timeout_seconds,
+        telegram_bot=app.bot,
     )
 
     app.add_handler(CommandHandler("start", cmd_start))
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CallbackQueryHandler(on_confirmation, pattern=r"^cleanrr:confirm:"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     return app
 

@@ -15,7 +15,7 @@ A Telegram bot that lets your friends and family fix their own media issues on y
 
 cleanrr sits next to your Sonarr / Radarr / Overseerr / qBittorrent stack and answers natural-language questions ("where's my movie?", "why is this stuck?") by reasoning over your stack with Claude. Eventually it can also take fix actions — re-search a stuck request, remove a stalled torrent, retry an import — with permission.
 
-> **Status:** alpha. Phase 4 of 6 is implemented (Telegram bot + Claude Agent SDK chat + `/link` identity flow + read-only tools). Write tools land next. Expect breaking changes pre-1.0.
+> **Status:** alpha. Phase 5 of 6 is in progress (Telegram bot + Claude Agent SDK chat + `/link` identity flow + read-only tools + first destructive action behind confirmation). Expect breaking changes pre-1.0.
 
 ## Why this exists
 
@@ -33,6 +33,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - TV show status via Sonarr — see what's downloaded and what's downloading.
 - Movie status via Radarr — see what's downloaded and what's downloading.
 - Stalled-torrent diagnostics via qBittorrent — admin-only "what's stuck?" check.
+- Cancel one of your own Overseerr requests via a chat-confirmation flow (Confirm / Cancel buttons).
 
 ## Commands
 
@@ -43,9 +44,15 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 | `/link <code>` | Anyone | Redeem a one-time code to bind your Telegram account to an Overseerr user. |
 | `/invite <overseerr_username>` | Admin only | Issue a one-time link code for a friend. Requires `ADMIN_TELEGRAM_IDS` set. |
 
+## Destructive actions
+
+When the bot is about to do something destructive (e.g. cancel a request), it posts a Telegram message describing the action with two inline buttons: **Confirm** and **Cancel**. Nothing happens until you tap one. If you don't tap anything within `CONFIRMATION_TTL_SECONDS` (default `60`), the prompt times out and denies the action.
+
+Ownership is double-checked at the tool layer: you can only cancel requests that Overseerr lists as yours.
+
 ## What it doesn't do yet
 
-- No write actions or destructive operations (Phase 5).
+- Most destructive operations (delete torrent, force re-search) land in PR 5b.
 - No proactive notifications (Phase 6).
 
 See [the roadmap](#roadmap) below.
@@ -91,6 +98,7 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `METRICS_BIND_ADDRESS` | `127.0.0.1` | Bind address for Prometheus `/metrics` endpoint. Set to `0.0.0.0` for multi-container scraping. |
 | `CLAUDE_TIMEOUT_SECONDS` | `30` | Wall-clock seconds before giving up on a single Claude response. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
+| `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
 | `QBITTORRENT_URL` | — | Base URL of your qBittorrent WebUI (e.g. `http://qbittorrent:8080`). |
 | `QBITTORRENT_USERNAME` | — | qBittorrent WebUI username. |
@@ -133,7 +141,7 @@ cleanrr/
 - [x] **Phase 2** — Claude Agent SDK integration (chat works)
 - [x] **Phase 3** — `/link` identity flow + SQLite mapping
 - [x] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
-- [ ] **Phase 5** — Write tools behind in-chat confirmation
+- [~] **Phase 5** — Write tools behind in-chat confirmation (first action: cancel Overseerr request; more in PR 5b)
 - [ ] **Phase 6** — Proactive notifications + polish (Maintainerr / Decluttarr alongside, admin commands, per-user rate limits)
 
 ### Out of scope (for now)

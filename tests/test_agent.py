@@ -346,6 +346,97 @@ async def test_respond_returns_normally_when_under_timeout() -> None:
 
 
 @pytest.mark.asyncio
+async def test_start_wires_can_use_tool_when_telegram_bot_provided(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With telegram_bot set, can_use_tool replaces permission_mode and write tools register."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+    )
+    bot = MagicMock()
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=settings,
+        timeout_seconds=5.0,
+        telegram_bot=bot,
+    )
+    await agent.start()
+
+    opts = captured_options["options"]
+    # can_use_tool replaces permission_mode in production wiring
+    assert opts.can_use_tool is not None  # type: ignore[union-attr]
+    assert opts.permission_mode is None  # type: ignore[union-attr]
+    # Write tool is registered alongside read tools
+    assert "remove_my_request" in opts.allowed_tools  # type: ignore[union-attr]
+    assert agent.confirmation_registry is not None
+
+    await agent.stop()
+    # Registry stopped on stop()
+    assert agent.confirmation_registry is None
+
+
+@pytest.mark.asyncio
+async def test_start_skips_write_tools_when_no_telegram_bot(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Without telegram_bot, write tools cannot run safely — they must not register."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+    )
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=settings,
+        timeout_seconds=5.0,
+    )
+    await agent.start()
+
+    opts = captured_options["options"]
+    assert "remove_my_request" not in opts.allowed_tools  # type: ignore[union-attr]
+    assert opts.can_use_tool is None  # type: ignore[union-attr]
+    assert opts.permission_mode == "dontAsk"  # type: ignore[union-attr]
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
 async def test_lock_releases_after_timeout() -> None:
     agent = Agent(
         identity=MagicMock(spec=Identity),
