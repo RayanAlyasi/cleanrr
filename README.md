@@ -15,7 +15,7 @@ A Telegram bot that lets your friends and family fix their own media issues on y
 
 cleanrr sits next to your Sonarr / Radarr / Overseerr / qBittorrent stack and answers natural-language questions ("where's my movie?", "why is this stuck?") by reasoning over your stack with Claude. Eventually it can also take fix actions — re-search a stuck request, remove a stalled torrent, retry an import — with permission.
 
-> **Status:** alpha. Phase 3 of 6 is implemented (Telegram bot + Claude Agent SDK chat + `/link` identity flow). Read-only tool integration lands next. Expect breaking changes pre-1.0.
+> **Status:** alpha. Phase 4 of 6 is implemented (Telegram bot + Claude Agent SDK chat + `/link` identity flow + read-only tools). Write tools land next. Expect breaking changes pre-1.0.
 
 ## Why this exists
 
@@ -32,6 +32,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
 - TV show status via Sonarr — see what's downloaded and what's downloading.
 - Movie status via Radarr — see what's downloaded and what's downloading.
+- Stalled-torrent diagnostics via qBittorrent — admin-only "what's stuck?" check.
 
 ## Commands
 
@@ -44,7 +45,6 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 
 ## What it doesn't do yet
 
-- No qBittorrent tool calls yet (Phase 4.5).
 - No write actions or destructive operations (Phase 5).
 - No proactive notifications (Phase 6).
 
@@ -92,6 +92,10 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `CLAUDE_TIMEOUT_SECONDS` | `30` | Wall-clock seconds before giving up on a single Claude response. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
+| `QBITTORRENT_URL` | — | Base URL of your qBittorrent WebUI (e.g. `http://qbittorrent:8080`). |
+| `QBITTORRENT_USERNAME` | — | qBittorrent WebUI username. |
+| `QBITTORRENT_PASSWORD` | — | qBittorrent WebUI password. |
+| `QBITTORRENT_TIMEOUT_SECONDS` | `10` | HTTP timeout for qBittorrent API calls in seconds. |
 
 ### Metrics (optional)
 
@@ -128,7 +132,7 @@ cleanrr/
 - [x] **Phase 1** — Project scaffold, Docker, echo bot
 - [x] **Phase 2** — Claude Agent SDK integration (chat works)
 - [x] **Phase 3** — `/link` identity flow + SQLite mapping
-- [ ] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
+- [x] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
 - [ ] **Phase 5** — Write tools behind in-chat confirmation
 - [ ] **Phase 6** — Proactive notifications + polish (Maintainerr / Decluttarr alongside, admin commands, per-user rate limits)
 

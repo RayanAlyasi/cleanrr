@@ -16,6 +16,7 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
+from cleanrr.tools.qbittorrent import build_tools as build_qbittorrent_tools
 from cleanrr.tools.radarr import build_tools as build_radarr_tools
 from cleanrr.tools.sonarr import build_tools as build_sonarr_tools
 
@@ -48,6 +49,9 @@ actions land in later phases. Don't promise actions you can't take.
 - `get_movie_status` — look up movie download status in Radarr (downloaded vs downloading
   vs nothing yet). Use when they ask about a specific film ("is Dune ready?", "where's
   my Batman movie?").
+- `list_stalled_torrents` — admin-only diagnostic that lists torrents stuck in qBittorrent
+  with no peers/progress. Use when the admin asks "what's stuck?", "show stalled downloads",
+  "anything broken?". Returns a refusal for non-admin callers — do not retry.
 """
 
 
@@ -109,6 +113,16 @@ class Agent:
                 )
             )
 
+        qbit_client: httpx.AsyncClient | None = None
+        if (
+            settings.qbittorrent_url is not None
+            and settings.qbittorrent_username is not None
+            and settings.qbittorrent_password is not None
+        ):
+            qbit_client = await stack.enter_async_context(
+                httpx.AsyncClient(timeout=settings.qbittorrent_timeout_seconds)
+            )
+
         tools = (
             build_overseerr_tools(overseerr_client, self._identity, settings)
             if overseerr_client is not None
@@ -140,6 +154,10 @@ class Agent:
                 radarr_client, overseerr_client, self._identity, settings
             )
             tools.extend(radarr_tools)
+
+        if qbit_client is not None:
+            qbit_tools = build_qbittorrent_tools(qbit_client, settings)
+            tools.extend(qbit_tools)
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}
