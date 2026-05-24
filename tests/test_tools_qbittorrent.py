@@ -521,6 +521,56 @@ async def test_success_retry_after_403_on_torrents(
 
 
 @pytest.mark.asyncio
+async def test_http_error_on_retry_after_reauth(
+    mock_qbit_client: AsyncMock, settings: Settings
+) -> None:
+    """First GET 403 → re-login OK → second GET raises httpx error → http_error."""
+    first_torrent_resp = MagicMock()
+    first_torrent_resp.status_code = 403
+
+    mock_qbit_client.post.return_value = _make_login_ok()
+    mock_qbit_client.get.side_effect = [first_torrent_resp, httpx.ConnectError("boom")]
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        assert result["is_error"] is True
+        assert "unreachable" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_parse_error_on_retry_after_reauth(
+    mock_qbit_client: AsyncMock, settings: Settings
+) -> None:
+    """First GET 403 → re-login OK → second GET returns invalid JSON → parse_error."""
+    first_torrent_resp = MagicMock()
+    first_torrent_resp.status_code = 403
+
+    second_torrent_resp = MagicMock()
+    second_torrent_resp.status_code = 200
+    second_torrent_resp.json.side_effect = ValueError("not json")
+
+    mock_qbit_client.post.return_value = _make_login_ok()
+    mock_qbit_client.get.side_effect = [first_torrent_resp, second_torrent_resp]
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        assert result["is_error"] is True
+        assert "Unexpected response" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_success_empty_list(mock_qbit_client: AsyncMock, settings: Settings) -> None:
     mock_qbit_client.post.return_value = _make_login_ok()
     torrent_resp = MagicMock()
