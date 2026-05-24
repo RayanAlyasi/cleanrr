@@ -35,8 +35,12 @@ logger = logging.getLogger(__name__)
 WRITE_TOOLS: frozenset[str] = frozenset({"remove_my_request"})
 
 _REGISTRY_MAX_ENTRIES = 100
+_REGISTRY_MAX_PER_USER = 3
 _FORMATTER_TIMEOUT_SECONDS = 1.5
 
+# CALLBACK_PREFIX uses ':' as a separator. The confirmation_id segment comes
+# from secrets.token_urlsafe(), which encodes to the RFC 4648 §5 URL-safe
+# alphabet [A-Za-z0-9_-] — no ':' — so split(':') stays unambiguous.
 CALLBACK_PREFIX = "cleanrr:confirm:"
 
 
@@ -86,11 +90,12 @@ class ConfirmationRegistry:
             except Exception:
                 logger.exception("confirmation registry sweeper crashed on shutdown")
 
-    async def reserve(self, *, tool_name: str) -> str | None:
+    async def reserve(self, *, tool_name: str, telegram_user_id: int) -> str | None:
         """Reserve a new confirmation_id if the registry has room. Returns None if full.
 
         The caller fills in ``prompt_message_id`` via ``register()`` once the
-        Telegram message is sent.
+        Telegram message is sent. Enforces a per-user cap so a single noisy
+        client can't exhaust the global slots.
         """
         async with self._lock:
             self._evict_expired_locked()
@@ -98,6 +103,17 @@ class ConfirmationRegistry:
                 logger.warning(
                     "confirmation registry full (%d entries); refusing new prompt for %s",
                     _REGISTRY_MAX_ENTRIES,
+                    tool_name,
+                )
+                return None
+            user_entries = sum(
+                1 for p in self._entries.values() if p.telegram_user_id == telegram_user_id
+            )
+            if user_entries >= _REGISTRY_MAX_PER_USER:
+                logger.warning(
+                    "user %s at per-user confirmation cap (%d); refusing %s",
+                    telegram_user_id,
+                    _REGISTRY_MAX_PER_USER,
                     tool_name,
                 )
                 return None
@@ -220,7 +236,7 @@ def _build_remove_my_request_formatter(
         # arbitrarily long; cap so a hostile entry can't blow past Telegram's
         # 4096-char message limit.
         title = str(media.get("title") or media.get("name") or "Unknown")[:80]
-        media_type = str(media.get("mediaType") or "media")
+        media_type = str(media.get("mediaType") or "media")[:20]
         status_label = _request_status_label(data.get("status"))
         return (
             f"Cancel request: {title} ({media_type}, status: {status_label})? "
@@ -268,15 +284,15 @@ def make_can_use_tool(
     """Build the ``can_use_tool`` callback wired to a specific Telegram bot + registry."""
 
     async def _resolve_prompt_text(tool_name: str, tool_args: dict[str, Any]) -> str:
+        # Each formatter is responsible for its own timeout (see the remove_my_request
+        # formatter for the pattern). The catch-all here covers programmer error in
+        # a future formatter, not slow I/O.
         formatter = formatters.get(tool_name)
         generic = f"Run {tool_name}?"
         if formatter is None:
             return generic
         try:
-            return await asyncio.wait_for(formatter(tool_args), timeout=_FORMATTER_TIMEOUT_SECONDS)
-        except TimeoutError:
-            logger.warning("confirmation formatter timed out for %s", tool_name)
-            return generic
+            return await formatter(tool_args)
         except Exception:
             logger.exception("confirmation formatter crashed for %s", tool_name)
             return generic
@@ -298,7 +314,9 @@ def make_can_use_tool(
             logger.error("can_use_tool fired without a telegram user contextvar")
             return PermissionResultDeny(message="internal error: no caller context")
 
-        confirmation_id = await registry.reserve(tool_name=bare_name)
+        confirmation_id = await registry.reserve(
+            tool_name=bare_name, telegram_user_id=telegram_user_id
+        )
         if confirmation_id is None:
             metrics.destructive_actions_total.labels(tool=bare_name, outcome="denied").inc()
             return PermissionResultDeny(message="confirmation registry full")

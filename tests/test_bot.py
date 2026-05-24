@@ -506,7 +506,7 @@ def _make_callback_update(callback_data: str, user_id: int = 42) -> tuple[MagicM
 @pytest.mark.asyncio
 async def test_on_confirmation_resolves_pending_for_right_user() -> None:
     registry = ConfirmationRegistry(ttl_seconds=60)
-    cid = await registry.reserve(tool_name="remove_my_request")
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     pending = await registry.register(
         confirmation_id=cid,
@@ -530,7 +530,7 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
 @pytest.mark.asyncio
 async def test_on_confirmation_rejects_wrong_user() -> None:
     registry = ConfirmationRegistry(ttl_seconds=60)
-    cid = await registry.reserve(tool_name="remove_my_request")
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     pending = await registry.register(
         confirmation_id=cid,

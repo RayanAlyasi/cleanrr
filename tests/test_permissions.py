@@ -53,7 +53,7 @@ def _counter(tool: str, outcome: str) -> float:
 @pytest.mark.asyncio
 async def test_reserve_and_register_returns_pending_entry() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cid = await reg.reserve(tool_name="remove_my_request")
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
 
     pending = await reg.register(
@@ -72,7 +72,7 @@ async def test_reserve_and_register_returns_pending_entry() -> None:
 @pytest.mark.asyncio
 async def test_resolve_sets_future_result_for_right_user() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cid = await reg.reserve(tool_name="remove_my_request")
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     pending = await reg.register(
         confirmation_id=cid,
@@ -92,7 +92,7 @@ async def test_resolve_sets_future_result_for_right_user() -> None:
 @pytest.mark.asyncio
 async def test_resolve_ignores_wrong_user() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cid = await reg.reserve(tool_name="remove_my_request")
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     pending = await reg.register(
         confirmation_id=cid,
@@ -114,7 +114,7 @@ async def test_resolve_ignores_wrong_user() -> None:
 @pytest.mark.asyncio
 async def test_timeout_resolves_with_false_and_removes_entry() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cid = await reg.reserve(tool_name="remove_my_request")
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     pending = await reg.register(
         confirmation_id=cid,
@@ -133,34 +133,57 @@ async def test_timeout_resolves_with_false_and_removes_entry() -> None:
 @pytest.mark.asyncio
 async def test_registry_full_returns_none() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    # Fill to capacity
+    # Fill to global capacity — use distinct user_ids so per-user cap doesn't fire first.
     reserved: list[str] = []
-    for _ in range(100):
-        cid = await reg.reserve(tool_name="remove_my_request")
+    for i in range(100):
+        cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=i)
         assert cid is not None
         await reg.register(
             confirmation_id=cid,
-            telegram_user_id=1,
+            telegram_user_id=i,
             tool_name="remove_my_request",
             tool_args={},
             prompt_message_id=1,
         )
         reserved.append(cid)
 
-    overflow = await reg.reserve(tool_name="remove_my_request")
+    overflow = await reg.reserve(tool_name="remove_my_request", telegram_user_id=9999)
     assert overflow is None
 
-    # Resolving one frees a slot
-    await reg.resolve(reserved[0], telegram_user_id=1, allowed=False)
-    new = await reg.reserve(tool_name="remove_my_request")
+    # Resolving one frees a slot for that user_id
+    await reg.resolve(reserved[0], telegram_user_id=0, allowed=False)
+    new = await reg.reserve(tool_name="remove_my_request", telegram_user_id=9999)
     assert new is not None
+
+
+@pytest.mark.asyncio
+async def test_per_user_cap_blocks_single_user_from_exhausting() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    for _ in range(3):
+        cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+        assert cid is not None
+        await reg.register(
+            confirmation_id=cid,
+            telegram_user_id=42,
+            tool_name="remove_my_request",
+            tool_args={},
+            prompt_message_id=1,
+        )
+
+    # 4th from same user is blocked
+    blocked = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert blocked is None
+
+    # A different user can still reserve
+    other = await reg.reserve(tool_name="remove_my_request", telegram_user_id=99)
+    assert other is not None
 
 
 @pytest.mark.asyncio
 async def test_concurrent_confirmations_same_user_have_distinct_ids() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cid_a = await reg.reserve(tool_name="remove_my_request")
-    cid_b = await reg.reserve(tool_name="remove_my_request")
+    cid_a = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    cid_b = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid_a is not None and cid_b is not None
     assert cid_a != cid_b
 
@@ -168,7 +191,7 @@ async def test_concurrent_confirmations_same_user_have_distinct_ids() -> None:
 @pytest.mark.asyncio
 async def test_lazy_expiration_evicts_old_entries() -> None:
     reg = ConfirmationRegistry(ttl_seconds=0.01)
-    cid = await reg.reserve(tool_name="remove_my_request")
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
     assert cid is not None
     await reg.register(
         confirmation_id=cid,
@@ -300,13 +323,13 @@ async def test_write_tool_times_out_when_no_click() -> None:
 async def test_registry_full_denies_with_metric() -> None:
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=60)
-    # Fill the registry
-    for _ in range(100):
-        cid = await reg.reserve(tool_name="remove_my_request")
+    # Fill the registry across distinct users so the global cap fires for user 42.
+    for i in range(100):
+        cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=i)
         assert cid is not None
         await reg.register(
             confirmation_id=cid,
-            telegram_user_id=1,
+            telegram_user_id=i,
             tool_name="remove_my_request",
             tool_args={},
             prompt_message_id=1,

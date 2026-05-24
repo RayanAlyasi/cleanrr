@@ -161,12 +161,14 @@ def build_tools(
         if del_resp.status_code in (200, 204):
             media = request_data.get("media") or {}
             title = str(media.get("title") or media.get("name") or "Unknown")[:80]
+            # Strip newlines so a hostile title can't inject fake log lines.
+            log_title = title.replace("\n", " ").replace("\r", " ")
             logger.info(
                 "destructive_action_executed: tool=remove_my_request "
                 "user=%s request_id=%d title=%s",
                 telegram_user_id,
                 request_id,
-                title,
+                log_title,
             )
             cleanrr.metrics.tool_calls_total.labels(
                 tool="remove_my_request", status="success"
