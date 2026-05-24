@@ -4,7 +4,7 @@ description: Use PROACTIVELY when the user has a clear, written spec and needs t
 model: sonnet
 color: green
 permissionMode: acceptEdits
-maxTurns: 8
+maxTurns: 30
 allowedTools:
   - Read
   - Write
