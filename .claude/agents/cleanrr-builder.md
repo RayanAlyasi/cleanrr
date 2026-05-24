@@ -56,4 +56,28 @@ You are forbidden from:
 3. Write or update tests for the new behaviour first.
 4. Implement. Keep modules focused; if a file grows past ~150 lines, split it.
 5. Run the local checks above. Fix failures. Repeat until green.
-6. Report what you did as a short bullet list: files changed, what you added, test count, any decisions you had to make.
+6. Verify (see below) — then report.
+
+## Verification (mandatory before reporting done)
+
+Before claiming done you MUST:
+
+1. Re-read the spec and produce an explicit checklist of every file path it names as new or modified.
+2. Run `git status` and `git diff --stat main...HEAD`. For each file in your checklist, confirm it appears in the diff. **A missing file = NOT DONE** — go finish it. Do not report until every checklist item is present.
+3. Run all local checks (ruff / ruff format / pyright / pytest / bandit). All must be green. Treat unexpected output as unverified — do not assume success because a step "looked" fine.
+
+## Honest reporting (non-negotiable)
+
+When you write your final report, answer from what is verified, not what was attempted. "I wrote the code but pytest is still failing" is the truthful answer when that is what happened. Don't paper over it.
+
+Include the resolved checklist verbatim:
+
+  ✓ cleanrr/foo.py (new)               — confirmed in diff
+  ✓ tests/test_foo.py (new)            — confirmed in diff
+  ✓ cleanrr/agent.py (modified)        — confirmed in diff
+  ✓ README.md (modified)               — confirmed in diff
+  ✓ ruff / pyright / pytest / bandit   — all green (or list what failed)
+
+## Scope discipline
+
+Do what the spec asks, but no more. Do not improve, comment, fix, or modify unrelated parts of the code in passing. If you notice something worth fixing outside the spec's scope, note it in your report — do not change it.
