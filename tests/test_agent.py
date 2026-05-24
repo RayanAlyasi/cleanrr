@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterator
 from typing import cast
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from claude_agent_sdk import AssistantMessage, TextBlock
@@ -12,6 +12,41 @@ from pydantic import HttpUrl, SecretStr
 from cleanrr.agent import Agent
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+
+
+@pytest.fixture()
+def settings_with_overseerr() -> Settings:
+    return Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+    )
+
+
+def _collect_allowed_tools(settings: Settings) -> list[str]:
+    """Return the allowed_tools list produced by Agent.start() for given settings."""
+    captured: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    async def _run() -> list[str]:
+        agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+        with patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient):
+            await agent.start()
+            await agent.stop()
+        opts = captured["options"]
+        return list(opts.allowed_tools)  # type: ignore[union-attr]
+
+    return asyncio.run(_run())
 
 
 @pytest.mark.asyncio
@@ -231,6 +266,28 @@ async def test_start_skips_radarr_tools_when_overseerr_missing(
     assert "get_movie_status" not in opts.allowed_tools  # type: ignore[union-attr]
 
     await agent.stop()
+
+
+def test_start_registers_qbittorrent_tools_when_all_configured(
+    settings_with_overseerr: Settings,
+) -> None:
+    settings_with_overseerr.qbittorrent_url = HttpUrl("http://qbittorrent:8080")
+    settings_with_overseerr.qbittorrent_username = "admin"
+    settings_with_overseerr.qbittorrent_password = SecretStr("pass")
+
+    allowed_tools = set(_collect_allowed_tools(settings_with_overseerr))
+    assert "list_stalled_torrents" in allowed_tools
+
+
+def test_start_skips_qbittorrent_tools_when_password_missing(
+    settings_with_overseerr: Settings,
+) -> None:
+    settings_with_overseerr.qbittorrent_url = HttpUrl("http://qbittorrent:8080")
+    settings_with_overseerr.qbittorrent_username = "admin"
+    settings_with_overseerr.qbittorrent_password = None
+
+    allowed_tools = set(_collect_allowed_tools(settings_with_overseerr))
+    assert "list_stalled_torrents" not in allowed_tools
 
 
 def _make_text_message(text: str) -> AssistantMessage:

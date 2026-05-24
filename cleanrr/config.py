@@ -107,6 +107,24 @@ class Settings(BaseSettings):
         description="HTTP timeout for Radarr API calls in seconds",
     )
 
+    qbittorrent_url: HttpUrl | None = Field(
+        default=None,
+        description="Base URL of your qBittorrent WebUI (e.g. http://qbittorrent:8080)",
+    )
+    qbittorrent_username: str | None = Field(
+        default=None,
+        description="qBittorrent WebUI username",
+    )
+    qbittorrent_password: SecretStr | None = Field(
+        default=None,
+        description="qBittorrent WebUI password",
+    )
+    qbittorrent_timeout_seconds: float = Field(
+        default=10.0,
+        gt=0,
+        description="HTTP timeout for qBittorrent API calls in seconds",
+    )
+
     claude_timeout_seconds: float = Field(
         default=30.0,
         gt=0,
