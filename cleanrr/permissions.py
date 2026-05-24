@@ -37,7 +37,7 @@ WRITE_TOOLS: frozenset[str] = frozenset({"remove_my_request"})
 _REGISTRY_MAX_ENTRIES = 100
 _FORMATTER_TIMEOUT_SECONDS = 1.5
 
-_CALLBACK_PREFIX = "cleanrr:confirm:"
+CALLBACK_PREFIX = "cleanrr:confirm:"
 
 
 @dataclass
@@ -309,11 +309,11 @@ def make_can_use_tool(
                 [
                     InlineKeyboardButton(
                         "Confirm",
-                        callback_data=f"{_CALLBACK_PREFIX}{confirmation_id}:yes",
+                        callback_data=f"{CALLBACK_PREFIX}{confirmation_id}:yes",
                     ),
                     InlineKeyboardButton(
                         "Cancel",
-                        callback_data=f"{_CALLBACK_PREFIX}{confirmation_id}:no",
+                        callback_data=f"{CALLBACK_PREFIX}{confirmation_id}:no",
                     ),
                 ]
             ]

@@ -1,4 +1,5 @@
 import logging
+import re
 import time
 from datetime import timedelta
 
@@ -16,6 +17,7 @@ import cleanrr.metrics as metrics
 from cleanrr.agent import Agent
 from cleanrr.config import Settings, clear_sdk_credentials, export_sdk_credentials
 from cleanrr.identity import Identity
+from cleanrr.permissions import CALLBACK_PREFIX
 
 logger = logging.getLogger(__name__)
 
@@ -121,9 +123,6 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
-_CALLBACK_PREFIX = "cleanrr:confirm:"
-
-
 async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None or update.effective_user is None:
@@ -131,11 +130,12 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     await query.answer()
 
     parts = query.data.split(":")
-    if len(parts) != 4 or f"{parts[0]}:{parts[1]}:" != _CALLBACK_PREFIX:
+    if len(parts) != 4 or f"{parts[0]}:{parts[1]}:" != CALLBACK_PREFIX:
         logger.warning("malformed confirmation callback_data")
         return
     confirmation_id, decision = parts[2], parts[3]
     if decision not in ("yes", "no"):
+        logger.warning("confirmation callback with unknown decision: %s", decision)
         return
 
     agent: Agent = context.application.bot_data[AGENT_KEY]
@@ -240,7 +240,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("link", cmd_link))
-    app.add_handler(CallbackQueryHandler(on_confirmation, pattern=r"^cleanrr:confirm:"))
+    app.add_handler(CallbackQueryHandler(on_confirmation, pattern=f"^{re.escape(CALLBACK_PREFIX)}"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     return app
 
