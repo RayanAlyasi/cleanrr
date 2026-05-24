@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.4.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.4.0...v0.4.1) (2026-05-24)
+
+
+### Bug Fixes
+
+* close link-code race; bound untrusted inputs ([#52](https://github.com/RayanAlyasi/cleanrr/issues/52)) ([9931aa8](https://github.com/RayanAlyasi/cleanrr/commit/9931aa80226f2e8beacdc353c6bb7523b3c1cade))
+
 ## [0.4.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.3.1...v0.4.0) (2026-05-24)
 
 
