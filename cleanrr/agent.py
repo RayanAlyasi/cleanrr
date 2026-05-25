@@ -308,11 +308,15 @@ class Agent:
 
         token = current_telegram_user_id.set(telegram_user_id)
         try:
-            # Acquire lock first; timeout fires inside the lock. This assumes the SDK's
-            # receive_response() propagates CancelledError on timeout — if it swallows it,
-            # the lock may not be released. The mocked test verifies this contract with the
-            # mocked SDK; real-world coverage requires integration testing.
-            async with self._lock:
+            # Bound lock acquisition so a prior query that swallowed CancelledError
+            # on timeout (leaving the inner wait_for blocked and the lock held) can't
+            # wedge subsequent users forever — they get a graceful TimeoutError
+            # instead of hanging. Same bound as the query itself, so the user-facing
+            # error is identical either way.
+            await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
+            try:
                 return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+            finally:
+                self._lock.release()
         finally:
             current_telegram_user_id.reset(token)

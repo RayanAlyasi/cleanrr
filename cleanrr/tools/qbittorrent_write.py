@@ -68,9 +68,9 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             return text_result("Internal error — user context unavailable.", is_error=True)
 
         if caller_id not in settings.admin_telegram_ids:
-            cleanrr.metrics.destructive_actions_total.labels(
-                tool="delete_torrent", outcome="unauthorized"
-            ).inc()
+            # Admin gate is a pre-confirmation guard, not a confirmation outcome,
+            # so it stays out of destructive_actions_total (which is locked to the
+            # Outcome literal). tool_calls_total carries the unauthorized signal.
             cleanrr.metrics.tool_calls_total.labels(
                 tool="delete_torrent", status="unauthorized"
             ).inc()

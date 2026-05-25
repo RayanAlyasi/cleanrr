@@ -38,9 +38,12 @@ class UserRequestLookup:
     candidates: list[dict[str, Any]] | None = field(default=None)
 
 
+ResolveUserStatus = Literal["ok", "user_not_found", "http_error", "parse_error"]
+
+
 async def _resolve_user_id(
     client: httpx.AsyncClient, base_url: str, username: str
-) -> tuple[int | None, str]:
+) -> tuple[int | None, ResolveUserStatus]:
     user_search = await client.get(
         f"{base_url}/api/v1/user",
         params={"q": username, "take": 1},
@@ -99,7 +102,7 @@ async def find_user_request(
     base_url = str(settings.overseerr_url).rstrip("/")
     user_id, resolve_status = await _resolve_user_id(overseerr_client, base_url, overseerr_username)
     if user_id is None:
-        return UserRequestLookup(status=resolve_status)  # type: ignore[arg-type]
+        return UserRequestLookup(status=resolve_status)
 
     requests_resp = await overseerr_client.get(
         f"{base_url}/api/v1/user/{user_id}/requests",

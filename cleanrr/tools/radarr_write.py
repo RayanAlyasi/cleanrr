@@ -11,6 +11,7 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
@@ -156,9 +157,13 @@ def build_tools(
                 is_error=True,
             )
 
+        # find_user_request already validated the contextvar is set; re-fetch
+        # here so the audit log carries the caller alongside Radarr's movie_id.
+        caller_id = current_telegram_user_id.get(None)
         log_title = title.replace("\n", " ").replace("\r", " ")
         logger.info(
-            "destructive_action_executed: tool=force_research_movie movie_id=%d title=%s",
+            "destructive_action_executed: tool=force_research_movie user=%s movie_id=%d title=%s",
+            caller_id,
             movie_id,
             log_title,
         )

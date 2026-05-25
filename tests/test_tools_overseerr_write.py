@@ -66,7 +66,11 @@ def _delete_response(status_code: int = 204) -> MagicMock:
     return resp
 
 
-def _counter_value(tool: str, outcome: str) -> float:
+def _tool_calls_value(tool: str, status: str) -> float:
+    return cleanrr.metrics.tool_calls_total.labels(tool=tool, status=status)._value.get()
+
+
+def _destructive_value(tool: str, outcome: str) -> float:
     return cleanrr.metrics.destructive_actions_total.labels(tool=tool, outcome=outcome)._value.get()
 
 
@@ -121,7 +125,8 @@ async def test_unlinked_user_returns_error_without_http_calls(
 async def test_ownership_mismatch_increments_unauthorized_metric_and_skips_delete(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    before = _counter_value("remove_my_request", "unauthorized")
+    tool_calls_before = _tool_calls_value("remove_my_request", "unauthorized")
+    destructive_before = _destructive_value("remove_my_request", "unauthorized")
 
     mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
@@ -141,7 +146,10 @@ async def test_ownership_mismatch_increments_unauthorized_metric_and_skips_delet
     assert result["is_error"] is True
     assert "not your" in result["content"][0]["text"].lower()
     mock_client.delete.assert_not_called()
-    assert _counter_value("remove_my_request", "unauthorized") == before + 1
+    assert _tool_calls_value("remove_my_request", "unauthorized") == tool_calls_before + 1
+    # destructive_actions_total is reserved for post-confirmation outcomes —
+    # ownership failures must not pollute its label set.
+    assert _destructive_value("remove_my_request", "unauthorized") == destructive_before
 
 
 @pytest.mark.asyncio

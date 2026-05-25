@@ -32,6 +32,11 @@ from cleanrr.tools._context import current_telegram_user_id
 
 logger = logging.getLogger(__name__)
 
+# Single source of truth for the destructive_actions_total{outcome=...} label.
+# Prometheus does not validate label values at runtime, so any code stamping the
+# metric with a value outside this literal will silently inflate cardinality.
+# Pre-confirmation guards (admin gates, ownership checks) belong on
+# tool_calls_total{status=...}, NOT this counter.
 Outcome = Literal["confirmed", "denied", "timed_out"]
 
 WRITE_TOOLS: frozenset[str] = frozenset(

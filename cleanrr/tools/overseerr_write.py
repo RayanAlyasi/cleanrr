@@ -132,9 +132,9 @@ def build_tools(
         requested_by = request_data.get("requestedBy") or {}
         owner_id = requested_by.get("id")
         if owner_id != caller_user_id:
-            cleanrr.metrics.destructive_actions_total.labels(
-                tool="remove_my_request", outcome="unauthorized"
-            ).inc()
+            # Ownership failure is a pre-confirmation guard, not a confirmation outcome,
+            # so it stays out of destructive_actions_total (which is locked to the
+            # Outcome literal). tool_calls_total carries the unauthorized signal.
             cleanrr.metrics.tool_calls_total.labels(
                 tool="remove_my_request", status="unauthorized"
             ).inc()

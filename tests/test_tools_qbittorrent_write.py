@@ -48,7 +48,11 @@ def _empty_torrents() -> MagicMock:
     return resp
 
 
-def _counter(tool: str, outcome: str) -> float:
+def _tool_calls_value(tool: str, status: str) -> float:
+    return cleanrr.metrics.tool_calls_total.labels(tool=tool, status=status)._value.get()
+
+
+def _destructive_value(tool: str, outcome: str) -> float:
     return cleanrr.metrics.destructive_actions_total.labels(tool=tool, outcome=outcome)._value.get()
 
 
@@ -95,7 +99,8 @@ async def test_admin_happy_path_deletes_with_files(
 async def test_non_admin_caller_is_rejected_with_metric(
     mock_client: AsyncMock, settings: Settings
 ) -> None:
-    before = _counter("delete_torrent", "unauthorized")
+    tool_calls_before = _tool_calls_value("delete_torrent", "unauthorized")
+    destructive_before = _destructive_value("delete_torrent", "unauthorized")
 
     tools = build_tools(mock_client, settings)
     tool_fn = tools[0]
@@ -110,7 +115,10 @@ async def test_non_admin_caller_is_rejected_with_metric(
     assert "admin" in result["content"][0]["text"].lower()
     mock_client.post.assert_not_called()
     mock_client.get.assert_not_called()
-    assert _counter("delete_torrent", "unauthorized") == before + 1
+    assert _tool_calls_value("delete_torrent", "unauthorized") == tool_calls_before + 1
+    # destructive_actions_total is reserved for post-confirmation outcomes —
+    # admin-gate failures must not pollute its label set.
+    assert _destructive_value("delete_torrent", "unauthorized") == destructive_before
 
 
 @pytest.mark.asyncio
