@@ -4,6 +4,7 @@ import asyncio
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
+import httpx
 import pytest
 from claude_agent_sdk import PermissionResultAllow, PermissionResultDeny
 
@@ -372,7 +373,7 @@ async def test_remove_my_request_formatter_enriches_with_title() -> None:
     }
     client.get.return_value = resp
 
-    formatters = build_confirmation_formatters(client, _settings())
+    formatters = build_confirmation_formatters(client, None, _settings())
     text = await formatters["remove_my_request"]({"request_id": 7})
 
     assert "Dune" in text
@@ -387,7 +388,7 @@ async def test_remove_my_request_formatter_falls_back_on_http_error() -> None:
     client = AsyncMock()
     client.get.side_effect = _httpx.RequestError("boom")
 
-    formatters = build_confirmation_formatters(client, _settings())
+    formatters = build_confirmation_formatters(client, None, _settings())
     text = await formatters["remove_my_request"]({"request_id": 7})
 
     assert "#7" in text
@@ -405,7 +406,7 @@ async def test_remove_my_request_formatter_caps_overlong_title() -> None:
     }
     client.get.return_value = resp
 
-    formatters = build_confirmation_formatters(client, _settings())
+    formatters = build_confirmation_formatters(client, None, _settings())
     text = await formatters["remove_my_request"]({"request_id": 7})
 
     # Confirms the 80-char cap is in place; allow some room for prefix/suffix.
@@ -419,6 +420,107 @@ def test_request_status_label_known_and_unknown() -> None:
     assert _request_status_label(99) == "status 99"
     assert _request_status_label(None) == "unknown"
     assert _request_status_label("foo") == "unknown"
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_enriches_with_name_and_size() -> None:
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = [{"name": "Big.Movie", "size": 5_368_709_120}]
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+
+    assert "Big.Movie" in text
+    assert "GB" in text
+    assert "cannot be undone" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_on_unknown_hash() -> None:
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = []
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+
+    assert "a" * 40 in text  # fallback uses the hash directly
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_on_http_error() -> None:
+    qbit = AsyncMock()
+    qbit.get.side_effect = httpx.RequestError("boom")
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+    assert "a" * 40 in text
+
+
+@pytest.mark.asyncio
+async def test_force_research_movie_formatter_uses_title() -> None:
+    formatters = build_confirmation_formatters(None, None, _settings())
+    text = await formatters["force_research_movie"]({"title": "Dune"})
+    assert "Dune" in text
+    assert "Radarr" in text
+
+
+@pytest.mark.asyncio
+async def test_force_research_show_formatter_uses_title() -> None:
+    formatters = build_confirmation_formatters(None, None, _settings())
+    text = await formatters["force_research_show"]({"title": "The Bear"})
+    assert "The Bear" in text
+    assert "Sonarr" in text
+    assert "series" in text.lower()
+
+
+@pytest.mark.asyncio
+async def test_force_research_formatters_handle_empty_title() -> None:
+    formatters = build_confirmation_formatters(None, None, _settings())
+    movie_text = await formatters["force_research_movie"]({"title": ""})
+    show_text = await formatters["force_research_show"]({})
+    # Don't crash on missing/empty title — fall back to placeholder
+    assert movie_text
+    assert show_text
+
+
+def test_write_tools_set_includes_all_destructive_tools() -> None:
+    expected = {
+        "remove_my_request",
+        "delete_torrent",
+        "force_research_movie",
+        "force_research_show",
+    }
+    assert expected.issubset(WRITE_TOOLS)
 
 
 # ---------------------------------------------------------------------------

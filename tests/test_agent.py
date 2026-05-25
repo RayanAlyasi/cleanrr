@@ -395,6 +395,60 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
 
 
 @pytest.mark.asyncio
+async def test_start_registers_all_write_tools_when_all_services_configured(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """All 4 destructive tools must register when their respective services + telegram_bot exist."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+        sonarr_url=HttpUrl("http://sonarr:8989"),
+        sonarr_api_key=SecretStr("so-key"),
+        radarr_url=HttpUrl("http://radarr:7878"),
+        radarr_api_key=SecretStr("ra-key"),
+        qbittorrent_url=HttpUrl("http://qbit:8080"),
+        qbittorrent_username="admin",
+        qbittorrent_password=SecretStr("pass"),
+    )
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=settings,
+        timeout_seconds=5.0,
+        telegram_bot=MagicMock(),
+    )
+    await agent.start()
+
+    opts = captured_options["options"]
+    allowed = set(opts.allowed_tools)  # type: ignore[union-attr]
+    assert {
+        "remove_my_request",
+        "delete_torrent",
+        "force_research_movie",
+        "force_research_show",
+    }.issubset(allowed), f"missing write tools: {allowed}"
+
+    await agent.stop()
+
+
+@pytest.mark.asyncio
 async def test_start_skips_write_tools_when_no_telegram_bot(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

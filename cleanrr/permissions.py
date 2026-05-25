@@ -34,7 +34,14 @@ logger = logging.getLogger(__name__)
 
 Outcome = Literal["confirmed", "denied", "timed_out"]
 
-WRITE_TOOLS: frozenset[str] = frozenset({"remove_my_request"})
+WRITE_TOOLS: frozenset[str] = frozenset(
+    {
+        "remove_my_request",
+        "delete_torrent",
+        "force_research_movie",
+        "force_research_show",
+    }
+)
 
 _REGISTRY_MAX_ENTRIES = 100
 _REGISTRY_MAX_PER_USER = 3
@@ -269,6 +276,81 @@ def _request_status_label(status: object) -> str:
     return "unknown"
 
 
+def _format_bytes(size: object) -> str:
+    if not isinstance(size, int | float) or size < 0:
+        return "?"
+    if size >= 1_073_741_824:
+        return f"{size / 1_073_741_824:.1f} GB"
+    if size >= 1_048_576:
+        return f"{size / 1_048_576:.0f} MB"
+    return f"{int(size)} B"
+
+
+def _build_delete_torrent_formatter(
+    qbit_client: httpx.AsyncClient | None,
+    settings: Settings,
+) -> ConfirmationFormatter:
+    """Look up the torrent name + size to make the confirmation prompt meaningful."""
+
+    async def formatter(tool_args: dict[str, Any]) -> str:
+        torrent_hash = tool_args.get("torrent_hash")
+        fallback = f"Delete torrent {torrent_hash} AND its files from disk? This cannot be undone."
+        if (
+            qbit_client is None
+            or settings.qbittorrent_url is None
+            or not isinstance(torrent_hash, str)
+        ):
+            return fallback
+        base_url = str(settings.qbittorrent_url).rstrip("/")
+        # The qBit session may not be live here (the read tools log in lazily).
+        # If unauthenticated we just fall back rather than try to log in from
+        # the formatter path.
+        try:
+            resp = await asyncio.wait_for(
+                qbit_client.get(
+                    f"{base_url}/api/v2/torrents/info", params={"hashes": torrent_hash}
+                ),
+                timeout=_FORMATTER_TIMEOUT_SECONDS,
+            )
+        except (TimeoutError, httpx.HTTPError):
+            return fallback
+        if resp.status_code != 200:
+            return fallback
+        try:
+            data = resp.json()
+        except ValueError:
+            return fallback
+        if not isinstance(data, list) or not data:
+            return fallback
+        entry = data[0]
+        if not isinstance(entry, dict):
+            return fallback
+        name = str(entry.get("name") or "unknown")[:80]
+        size = _format_bytes(entry.get("size"))
+        return (
+            f"Delete torrent '{name}' ({size}) AND its downloaded files from disk? "
+            "This cannot be undone."
+        )
+
+    return formatter
+
+
+def _build_force_research_movie_formatter() -> ConfirmationFormatter:
+    async def formatter(tool_args: dict[str, Any]) -> str:
+        title = str(tool_args.get("title") or "")[:80] or "your movie"
+        return f"Re-search Radarr for '{title}'?"
+
+    return formatter
+
+
+def _build_force_research_show_formatter() -> ConfirmationFormatter:
+    async def formatter(tool_args: dict[str, Any]) -> str:
+        title = str(tool_args.get("title") or "")[:80] or "your show"
+        return f"Re-search Sonarr for '{title}' (whole series)?"
+
+    return formatter
+
+
 CanUseTool = Callable[
     [str, dict[str, Any], ToolPermissionContext],
     Awaitable[PermissionResultAllow | PermissionResultDeny],
@@ -277,10 +359,14 @@ CanUseTool = Callable[
 
 def build_confirmation_formatters(
     overseerr_client: httpx.AsyncClient | None,
+    qbit_client: httpx.AsyncClient | None,
     settings: Settings,
 ) -> dict[str, ConfirmationFormatter]:
     return {
         "remove_my_request": _build_remove_my_request_formatter(overseerr_client, settings),
+        "delete_torrent": _build_delete_torrent_formatter(qbit_client, settings),
+        "force_research_movie": _build_force_research_movie_formatter(),
+        "force_research_show": _build_force_research_show_formatter(),
     }
 
 

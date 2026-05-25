@@ -15,7 +15,7 @@ A Telegram bot that lets your friends and family fix their own media issues on y
 
 cleanrr sits next to your Sonarr / Radarr / Overseerr / qBittorrent stack and answers natural-language questions ("where's my movie?", "why is this stuck?") by reasoning over your stack with Claude. Eventually it can also take fix actions — re-search a stuck request, remove a stalled torrent, retry an import — with permission.
 
-> **Status:** alpha. Phase 5 of 6 is in progress (Telegram bot + Claude Agent SDK chat + `/link` identity flow + read-only tools + first destructive action behind confirmation). Expect breaking changes pre-1.0.
+> **Status:** alpha. Phase 5 of 6 complete (Telegram bot + Claude Agent SDK chat + `/link` identity flow + read-only tools + destructive actions behind confirmation). Expect breaking changes pre-1.0.
 
 ## Why this exists
 
@@ -34,6 +34,8 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Movie status via Radarr — see what's downloaded and what's downloading.
 - Stalled-torrent diagnostics via qBittorrent — admin-only "what's stuck?" check.
 - Cancel one of your own Overseerr requests via a chat-confirmation flow (Confirm / Cancel buttons).
+- Re-trigger a Radarr / Sonarr search on one of your own stuck requests (owner-scoped, confirmation-gated).
+- Admin: delete a stalled torrent and its files from qBittorrent (admin-only, confirmation-gated).
 
 ## Commands
 
@@ -46,9 +48,16 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 
 ## Destructive actions
 
-When the bot is about to do something destructive (e.g. cancel a request), it posts a Telegram message describing the action with two inline buttons: **Confirm** and **Cancel**. Nothing happens until you tap one. If you don't tap anything within `CONFIRMATION_TTL_SECONDS` (default `60`), the prompt times out and denies the action.
+When the bot is about to do something destructive, it posts a Telegram message describing the action with two inline buttons: **Confirm** and **Cancel**. Nothing happens until you tap one. If you don't tap anything within `CONFIRMATION_TTL_SECONDS` (default `60`), the prompt times out and denies the action.
 
-Ownership is double-checked at the tool layer: you can only cancel requests that Overseerr lists as yours.
+Ownership is double-checked at the tool layer: you can only cancel or re-search requests that Overseerr lists as yours. Deleting a torrent is admin-only.
+
+| Action | Who | Tool |
+| --- | --- | --- |
+| Cancel an Overseerr request | Owner | `remove_my_request` |
+| Re-trigger a Radarr search | Owner | `force_research_movie` |
+| Re-trigger a Sonarr search (whole series) | Owner | `force_research_show` |
+| Delete a torrent + files from qBittorrent | Admin | `delete_torrent` |
 
 ## What it doesn't do yet
 
@@ -141,7 +150,7 @@ cleanrr/
 - [x] **Phase 2** — Claude Agent SDK integration (chat works)
 - [x] **Phase 3** — `/link` identity flow + SQLite mapping
 - [x] **Phase 4** — Read-only tools (Overseerr / Sonarr / Radarr / qBittorrent status)
-- [~] **Phase 5** — Write tools behind in-chat confirmation (first action: cancel Overseerr request; more in PR 5b)
+- [x] **Phase 5** — Write tools behind in-chat confirmation (cancel request, delete torrent, force re-search movie/show)
 - [ ] **Phase 6** — Proactive notifications + polish (Maintainerr / Decluttarr alongside, admin commands, per-user rate limits)
 
 ### Out of scope (for now)
