@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.4.1...v0.5.0) (2026-05-25)
+
+
+### Features
+
+* add destructive-action confirmation flow ([#55](https://github.com/RayanAlyasi/cleanrr/issues/55)) ([38de348](https://github.com/RayanAlyasi/cleanrr/commit/38de348b347fc3a020febd500020556d770f438a))
+* write tools — delete_torrent, force_research_movie, force_research_show ([#57](https://github.com/RayanAlyasi/cleanrr/issues/57)) ([269ba70](https://github.com/RayanAlyasi/cleanrr/commit/269ba7019914d2c494910b3f2ed1a6d043e05d3c))
+
 ## [0.4.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.4.0...v0.4.1) (2026-05-24)
 
 
