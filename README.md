@@ -61,8 +61,8 @@ Ownership is double-checked at the tool layer: you can only cancel or re-search 
 
 ## What it doesn't do yet
 
-- Most destructive operations (delete torrent, force re-search) land in PR 5b.
-- No proactive notifications (Phase 6).
+- No proactive notifications when a request changes state (Phase 6).
+- No per-user rate limits or admin commands beyond `/invite` (Phase 6).
 
 See [the roadmap](#roadmap) below.
 
