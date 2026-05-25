@@ -43,6 +43,8 @@ tool_calls_total = Counter(
 
 destructive_actions_total = Counter(
     "cleanrr_destructive_actions_total",
+    # Allowed outcome values: confirmed | denied | timed_out (see permissions.Outcome).
+    # Pre-confirmation rejections (admin gates, ownership) belong on tool_calls_total.
     "Destructive tool invocations by tool and confirmation outcome",
     ["tool", "outcome"],
 )
