@@ -469,6 +469,32 @@ async def test_delete_torrent_formatter_falls_back_on_unknown_hash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_torrent_formatter_strips_whitespace_like_the_tool() -> None:
+    """Formatter and tool must agree on what counts as a valid hash, or the prompt lies."""
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = [{"name": "Movie.X", "size": 1_073_741_824}]
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "  " + "a" * 40 + "  "})
+
+    # The tool would accept after stripping; the formatter must too, so the
+    # prompt and the action stay in sync.
+    assert "invalid hash" not in text.lower()
+    assert "Movie.X" in text
+
+
+@pytest.mark.asyncio
 async def test_delete_torrent_formatter_rejects_invalid_hash_without_http_call() -> None:
     qbit = AsyncMock()
     settings = Settings(

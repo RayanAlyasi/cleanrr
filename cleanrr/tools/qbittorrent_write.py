@@ -71,7 +71,9 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             cleanrr.metrics.destructive_actions_total.labels(
                 tool="delete_torrent", outcome="unauthorized"
             ).inc()
-            cleanrr.metrics.tool_calls_total.labels(tool="delete_torrent", status="not_admin").inc()
+            cleanrr.metrics.tool_calls_total.labels(
+                tool="delete_torrent", status="unauthorized"
+            ).inc()
             return text_result("Only the admin can delete torrents.", is_error=True)
 
         base_url = str(settings.qbittorrent_url).rstrip("/")

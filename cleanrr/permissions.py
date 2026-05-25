@@ -293,11 +293,12 @@ def _build_delete_torrent_formatter(
     """Look up the torrent name + size to make the confirmation prompt meaningful."""
 
     async def formatter(tool_args: dict[str, Any]) -> str:
-        torrent_hash = tool_args.get("torrent_hash")
-        # Validate before passing to qBit even though the tool will re-validate —
-        # a bad value here would otherwise waste an HTTP call and embed
-        # untrusted text in the prompt. Display only the first 40 chars so a
-        # giant string can't blow past Telegram's message limit.
+        raw = tool_args.get("torrent_hash")
+        # Mirror the tool's own normalization (strip + lower) BEFORE validating,
+        # so the prompt's "invalid" verdict matches what the tool will actually do.
+        # Otherwise a hash with stray whitespace renders as "invalid" but then
+        # passes the tool's check, and the confirmation prompt becomes a lie.
+        torrent_hash = raw.strip() if isinstance(raw, str) else raw
         if (
             not isinstance(torrent_hash, str)
             or len(torrent_hash) != 40
