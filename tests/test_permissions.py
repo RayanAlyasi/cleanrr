@@ -469,6 +469,28 @@ async def test_delete_torrent_formatter_falls_back_on_unknown_hash() -> None:
 
 
 @pytest.mark.asyncio
+async def test_delete_torrent_formatter_rejects_invalid_hash_without_http_call() -> None:
+    qbit = AsyncMock()
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+
+    for bad in ["", "abc", "g" * 40, "X" * 5000, None, 42]:
+        text = await formatters["delete_torrent"]({"torrent_hash": bad})
+        # All bad inputs flag invalid + bounded length
+        assert "invalid hash" in text.lower()
+        assert len(text) < 200
+    qbit.get.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_delete_torrent_formatter_falls_back_on_http_error() -> None:
     qbit = AsyncMock()
     qbit.get.side_effect = httpx.RequestError("boom")

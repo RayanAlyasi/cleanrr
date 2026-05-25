@@ -294,12 +294,24 @@ def _build_delete_torrent_formatter(
 
     async def formatter(tool_args: dict[str, Any]) -> str:
         torrent_hash = tool_args.get("torrent_hash")
-        fallback = f"Delete torrent {torrent_hash} AND its files from disk? This cannot be undone."
+        # Validate before passing to qBit even though the tool will re-validate —
+        # a bad value here would otherwise waste an HTTP call and embed
+        # untrusted text in the prompt. Display only the first 40 chars so a
+        # giant string can't blow past Telegram's message limit.
         if (
-            qbit_client is None
-            or settings.qbittorrent_url is None
-            or not isinstance(torrent_hash, str)
+            not isinstance(torrent_hash, str)
+            or len(torrent_hash) != 40
+            or not all(c in "0123456789abcdefABCDEF" for c in torrent_hash)
         ):
+            shown = (
+                torrent_hash[:40] + "..."
+                if isinstance(torrent_hash, str) and torrent_hash
+                else "<missing>"
+            )
+            return f"Delete torrent (invalid hash: {shown}) AND its files? Tool will refuse."
+        normalized = torrent_hash.lower()
+        fallback = f"Delete torrent {normalized} AND its files from disk? This cannot be undone."
+        if qbit_client is None or settings.qbittorrent_url is None:
             return fallback
         base_url = str(settings.qbittorrent_url).rstrip("/")
         # The qBit session may not be live here (the read tools log in lazily).
@@ -307,9 +319,7 @@ def _build_delete_torrent_formatter(
         # the formatter path.
         try:
             resp = await asyncio.wait_for(
-                qbit_client.get(
-                    f"{base_url}/api/v2/torrents/info", params={"hashes": torrent_hash}
-                ),
+                qbit_client.get(f"{base_url}/api/v2/torrents/info", params={"hashes": normalized}),
                 timeout=_FORMATTER_TIMEOUT_SECONDS,
             )
         except (TimeoutError, httpx.HTTPError):
