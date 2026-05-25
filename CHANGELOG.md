@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.0...v0.5.1) (2026-05-25)
+
+
+### Bug Fixes
+
+* cardinality, audit logs, lock timeout ([#58](https://github.com/RayanAlyasi/cleanrr/issues/58)) ([1d7ced9](https://github.com/RayanAlyasi/cleanrr/commit/1d7ced9a16bd04dfa875b85b6bdd8dab49da8a92))
+
 ## [0.5.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.4.1...v0.5.0) (2026-05-25)
 
 
