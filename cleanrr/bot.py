@@ -31,7 +31,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         return
     metrics.telegram_messages_total.labels(kind="command", command="start").inc()
     await update.message.reply_text(
-        "cleanrr is online. Ask me anything — fix actions land in a later phase."
+        "cleanrr is online. Ask about your requests, or ask me to cancel or "
+        "re-search one — I'll confirm before doing anything destructive."
     )
 
 

@@ -24,8 +24,11 @@ from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
 from cleanrr.tools.overseerr_write import build_tools as build_overseerr_write_tools
 from cleanrr.tools.qbittorrent import build_tools as build_qbittorrent_tools
+from cleanrr.tools.qbittorrent_write import build_tools as build_qbittorrent_write_tools
 from cleanrr.tools.radarr import build_tools as build_radarr_tools
+from cleanrr.tools.radarr_write import build_tools as build_radarr_write_tools
 from cleanrr.tools.sonarr import build_tools as build_sonarr_tools
+from cleanrr.tools.sonarr_write import build_tools as build_sonarr_write_tools
 
 if TYPE_CHECKING:
     import telegram
@@ -70,6 +73,18 @@ you can't take.
   until the tool returns. Look up the right request with `find_my_request` first; never
   guess an ID. Removes the request record only — it does NOT delete media that already
   downloaded.
+- `delete_torrent` — admin-only. Permanently delete a torrent AND its downloaded
+  files from qBittorrent. Pass the torrent's hash (the long hex string from
+  `list_stalled_torrents`). Destructive: the admin confirms in chat first. Use
+  this for torrents wedged with no recovery path — not for ones that might still
+  finish.
+- `force_research_movie` — re-trigger a Radarr search for one of YOUR OWN
+  requested movies. Idempotent (it just kicks off another search), but the
+  user still confirms in chat. Use when a movie request has been sitting with
+  no progress and the user wants to nudge it. Pass the title as the user said it.
+- `force_research_show` — re-trigger a Sonarr search for one of YOUR OWN
+  requested TV shows at the series level (searches all monitored episodes).
+  Same confirmation flow as movies. Pass the title as the user said it.
 
 ## Trust hierarchy
 Three tiers of content. Treat them differently.
@@ -218,8 +233,28 @@ class Agent:
             tools.extend(qbit_tools)
 
         if overseerr_client is not None and self._telegram_bot is not None:
-            write_tools = build_overseerr_write_tools(overseerr_client, self._identity, settings)
-            tools.extend(write_tools)
+            tools.extend(build_overseerr_write_tools(overseerr_client, self._identity, settings))
+
+        if qbit_client is not None and self._telegram_bot is not None:
+            tools.extend(build_qbittorrent_write_tools(qbit_client, settings))
+
+        if (
+            radarr_client is not None
+            and overseerr_client is not None
+            and self._telegram_bot is not None
+        ):
+            tools.extend(
+                build_radarr_write_tools(radarr_client, overseerr_client, self._identity, settings)
+            )
+
+        if (
+            sonarr_client is not None
+            and overseerr_client is not None
+            and self._telegram_bot is not None
+        ):
+            tools.extend(
+                build_sonarr_write_tools(sonarr_client, overseerr_client, self._identity, settings)
+            )
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}
@@ -232,7 +267,7 @@ class Agent:
                 ttl_seconds=settings.confirmation_ttl_seconds
             )
             await self._confirmation_registry.start()
-            formatters = build_confirmation_formatters(overseerr_client, settings)
+            formatters = build_confirmation_formatters(overseerr_client, qbit_client, settings)
             self._options.can_use_tool = make_can_use_tool(
                 self._telegram_bot,
                 self._confirmation_registry,
