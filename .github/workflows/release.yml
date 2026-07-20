@@ -25,7 +25,7 @@ jobs:
       # workflow_dispatch as a fallback.
       TAG_NAME: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           ref: ${{ env.TAG_NAME }}
 
