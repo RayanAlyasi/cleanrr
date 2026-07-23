@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
 
-import cleanrr.metrics
+import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._results import text_result
@@ -32,7 +32,7 @@ def build_tools(
         title_input = args.get("title", "").strip()
 
         if settings.radarr_url is None or settings.radarr_api_key is None:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="get_movie_status", status="radarr_not_configured"
             ).inc()
             return text_result(
@@ -44,15 +44,11 @@ def build_tools(
 
         error_response = render_lookup_error(lookup, title_input)
         if error_response is not None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="get_movie_status", status=lookup.status
-            ).inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status=lookup.status).inc()
             return error_response
 
         if lookup.request is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="get_movie_status", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status="http_error").inc()
             return text_result(
                 "An error occurred while fetching movie status — try again in a moment.",
                 is_error=True,
@@ -61,17 +57,13 @@ def build_tools(
         media = lookup.request.get("media", {})
         tmdb_id = media.get("tmdbId")
         if tmdb_id is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="get_movie_status", status="not_a_movie"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status="not_a_movie").inc()
             return text_result(
                 "That looks like a TV show — try asking about its episodes.",
                 is_error=False,
             )
         if not isinstance(tmdb_id, int):
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="get_movie_status", status="parse_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status="parse_error").inc()
             return text_result(
                 "Unexpected response format from Overseerr — try again later.",
                 is_error=True,
@@ -84,9 +76,7 @@ def build_tools(
                 params={"tmdbId": tmdb_id},
             )
             if movie_resp.status_code != 200:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="get_movie_status", status="http_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="get_movie_status", status="http_error").inc()
                 return text_result(
                     "Couldn't reach Radarr — try again in a moment.",
                     is_error=True,
@@ -95,16 +85,14 @@ def build_tools(
             try:
                 movie_data = movie_resp.json()
             except ValueError:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="get_movie_status", status="parse_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="get_movie_status", status="parse_error").inc()
                 return text_result(
                     "Unexpected response format from Radarr — try again later.",
                     is_error=True,
                 )
 
             if not movie_data:
-                cleanrr.metrics.tool_calls_total.labels(
+                metrics.tool_calls_total.labels(
                     tool="get_movie_status", status="not_in_radarr"
                 ).inc()
                 return text_result(
@@ -115,9 +103,7 @@ def build_tools(
 
             movie = movie_data[0]
             if not isinstance(movie, dict):
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="get_movie_status", status="parse_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="get_movie_status", status="parse_error").inc()
                 return text_result(
                     "Unexpected response format from Radarr — try again later.",
                     is_error=True,
@@ -129,9 +115,7 @@ def build_tools(
             has_file = movie.get("hasFile", False)
 
             if movie_id is None or title is None:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="get_movie_status", status="parse_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="get_movie_status", status="parse_error").inc()
                 return text_result(
                     "Unexpected response format from Radarr — try again later.",
                     is_error=True,
@@ -165,14 +149,12 @@ def build_tools(
             else:
                 result_text = f"{title_year}: nothing yet — Radarr is searching."
 
-            cleanrr.metrics.tool_calls_total.labels(tool="get_movie_status", status="success").inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status="success").inc()
             return text_result(result_text, is_error=False)
 
         except httpx.HTTPError:
             logger.exception("Radarr HTTP error")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="get_movie_status", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="get_movie_status", status="http_error").inc()
             return text_result(
                 "An error occurred while fetching movie status — try again in a moment.",
                 is_error=True,
