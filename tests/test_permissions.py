@@ -13,10 +13,10 @@ from cleanrr.config import Settings
 from cleanrr.permissions import (
     WRITE_TOOLS,
     ConfirmationRegistry,
-    _request_status_label,
     build_confirmation_formatters,
     make_can_use_tool,
 )
+from cleanrr.permissions._formatters import _request_status_label
 from cleanrr.tools._context import current_telegram_user_id
 
 
