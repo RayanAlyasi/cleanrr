@@ -102,6 +102,30 @@ async def test_resolve_user_id_malformed_json(mock_client: AsyncMock) -> None:
     assert label == "parse_error"
 
 
+@pytest.mark.asyncio
+async def test_resolve_user_id_non_dict_response(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = ["not", "a", "dict"]
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "parse_error"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_non_list_results(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": "not-a-list"}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "parse_error"
+
+
 # ---------------------------------------------------------------------------
 # find_user_request
 # ---------------------------------------------------------------------------
@@ -255,6 +279,86 @@ async def test_find_user_request_http_error_on_requests_fetch(
     try:
         result = await find_user_request(mock_client, mock_identity, settings, "Severance")
         assert result.status == "http_error"
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_non_dict_response(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = ["not", "a", "dict"]
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "Severance")
+        assert result.status == "parse_error"
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_non_list_results(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {"results": "not-a-list"}
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "Severance")
+        assert result.status == "parse_error"
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_skips_malformed_entries(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            "not-a-dict",
+            {"id": 1, "status": 2, "media": "not-a-dict-either"},
+            {"id": 2, "status": 2, "media": {"title": "Severance", "status": 5}},
+        ]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "severance")
+        assert result.status == "ok"
+        assert result.request is not None
+        assert result.request["media"]["title"] == "Severance"
     finally:
         current_telegram_user_id.reset(token)
 

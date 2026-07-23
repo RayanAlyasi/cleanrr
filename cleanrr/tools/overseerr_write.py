@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
 
-import cleanrr.metrics
+import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
@@ -38,9 +38,7 @@ def build_tools(
     )
     async def remove_my_request(args: dict[str, Any]) -> dict[str, Any]:
         if settings.overseerr_url is None or settings.overseerr_api_key is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="not_configured"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="not_configured").inc()
             return text_result(
                 "Overseerr isn't configured yet — ask the admin to set "
                 "OVERSEERR_URL and OVERSEERR_API_KEY.",
@@ -49,25 +47,21 @@ def build_tools(
 
         request_id = args.get("request_id")
         if not isinstance(request_id, int) or request_id <= 0:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="bad_args"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="bad_args").inc()
             return text_result("Bad request id.", is_error=True)
 
         try:
             telegram_user_id = current_telegram_user_id.get()
         except LookupError:
             logger.exception("ContextVar not set in remove_my_request")
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="remove_my_request", status="context_missing"
             ).inc()
             return text_result("Internal error — couldn't identify caller.", is_error=True)
 
         overseerr_username = await identity.get_link(telegram_user_id)
         if overseerr_username is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="unlinked_user"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="unlinked_user").inc()
             return text_result(
                 "You haven't linked your Overseerr account yet. Send /link <code> "
                 "first (ask the admin for a code).",
@@ -79,9 +73,7 @@ def build_tools(
             client, base_url, overseerr_username
         )
         if caller_user_id is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status=resolve_status
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status=resolve_status).inc()
             if resolve_status == "user_not_found":
                 return text_result(
                     "Couldn't find your Overseerr account — admin may need to re-issue the link.",
@@ -96,23 +88,19 @@ def build_tools(
             get_resp = await client.get(f"{base_url}/api/v1/request/{request_id}")
         except httpx.HTTPError:
             logger.exception("HTTP error fetching request %d", request_id)
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="http_error").inc()
             return text_result(
                 "Couldn't reach Overseerr — try again in a moment.",
                 is_error=True,
             )
 
         if get_resp.status_code == 404:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="remove_my_request", status="already_removed"
             ).inc()
             return text_result("Request already removed.", is_error=False)
         if get_resp.status_code != 200:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="http_error").inc()
             return text_result(
                 f"Couldn't fetch request (status {get_resp.status_code}).",
                 is_error=True,
@@ -121,23 +109,21 @@ def build_tools(
         try:
             request_data = get_resp.json()
         except ValueError:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="parse_error"
-            ).inc()
+            request_data = None
+        if not isinstance(request_data, dict):
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="parse_error").inc()
             return text_result(
                 "Unexpected response format from Overseerr — try again later.",
                 is_error=True,
             )
 
-        requested_by = request_data.get("requestedBy") or {}
-        owner_id = requested_by.get("id")
+        requested_by = request_data.get("requestedBy")
+        owner_id = requested_by.get("id") if isinstance(requested_by, dict) else None
         if owner_id != caller_user_id:
             # Ownership failure is a pre-confirmation guard, not a confirmation outcome,
             # so it stays out of destructive_actions_total (which is locked to the
             # Outcome literal). tool_calls_total carries the unauthorized signal.
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="unauthorized"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="unauthorized").inc()
             logger.warning(
                 "remove_my_request ownership mismatch: caller=%s request_owner=%s request_id=%d",
                 caller_user_id,
@@ -150,16 +136,16 @@ def build_tools(
             del_resp = await client.delete(f"{base_url}/api/v1/request/{request_id}")
         except httpx.HTTPError:
             logger.exception("HTTP error deleting request %d", request_id)
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="http_error").inc()
             return text_result(
                 "Couldn't reach Overseerr — try again in a moment.",
                 is_error=True,
             )
 
         if del_resp.status_code in (200, 204):
-            media = request_data.get("media") or {}
+            media = request_data.get("media")
+            if not isinstance(media, dict):
+                media = {}
             title = str(media.get("title") or media.get("name") or "Unknown")[:80]
             # Strip newlines so a hostile title can't inject fake log lines.
             log_title = title.replace("\n", " ").replace("\r", " ")
@@ -170,17 +156,15 @@ def build_tools(
                 request_id,
                 log_title,
             )
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="success"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="remove_my_request", status="success").inc()
             return text_result(f"Cancelled '{title}'.", is_error=False)
         if del_resp.status_code == 404:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="remove_my_request", status="already_removed"
             ).inc()
             return text_result("Request already removed.", is_error=False)
 
-        cleanrr.metrics.tool_calls_total.labels(tool="remove_my_request", status="http_error").inc()
+        metrics.tool_calls_total.labels(tool="remove_my_request", status="http_error").inc()
         return text_result(
             f"Overseerr refused the delete (status {del_resp.status_code}).",
             is_error=True,

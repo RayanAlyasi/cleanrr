@@ -372,6 +372,30 @@ async def test_get_malformed_json_returns_error(
 
 
 @pytest.mark.asyncio
+async def test_get_non_dict_json_returns_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    non_dict_json = MagicMock()
+    non_dict_json.status_code = 200
+    non_dict_json.json.return_value = ["not", "a", "dict"]
+    mock_client.get.side_effect = [_user_search_response(user_id=42), non_dict_json]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "format" in result["content"][0]["text"].lower()
+    assert _tool_calls_value("remove_my_request", "parse_error") >= 1
+
+
+@pytest.mark.asyncio
 async def test_delete_http_error_returns_friendly_message(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
