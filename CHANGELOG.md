@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.5.3](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.2...v0.5.3) (2026-07-23)
+
+
+### Bug Fixes
+
+* bugs found via live deployment test ([#68](https://github.com/RayanAlyasi/cleanrr/issues/68)) ([2d37233](https://github.com/RayanAlyasi/cleanrr/commit/2d3723388908977bcacca1844fe02afc0be61baf))
+* parse single admin Telegram ID from env correctly ([#66](https://github.com/RayanAlyasi/cleanrr/issues/66)) ([777f74b](https://github.com/RayanAlyasi/cleanrr/commit/777f74b9c8fd1a1350d0deb122d8e4d532c426e0))
+
 ## [0.5.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.1...v0.5.2) (2026-07-23)
 
 
