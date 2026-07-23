@@ -146,6 +146,7 @@ class Agent:
         self._client: ClaudeSDKClient | None = None
         self._stack: AsyncExitStack | None = None
         self._confirmation_registry: ConfirmationRegistry | None = None
+        self._overseerr_client: httpx.AsyncClient | None = None
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
         self._lock = asyncio.Lock()
@@ -153,6 +154,10 @@ class Agent:
     @property
     def confirmation_registry(self) -> ConfirmationRegistry | None:
         return self._confirmation_registry
+
+    @property
+    def overseerr_client(self) -> httpx.AsyncClient | None:
+        return self._overseerr_client
 
     async def start(self) -> None:
         if self._client is not None:
@@ -168,6 +173,7 @@ class Agent:
                     timeout=settings.overseerr_timeout_seconds,
                 )
             )
+        self._overseerr_client = overseerr_client
 
         sonarr_client: httpx.AsyncClient | None = None
         if settings.sonarr_url is not None and settings.sonarr_api_key is not None:
@@ -290,6 +296,7 @@ class Agent:
         if self._confirmation_registry is not None:
             await self._confirmation_registry.stop()
             self._confirmation_registry = None
+        self._overseerr_client = None
         await self._stack.aclose()
         self._stack = None
         self._client = None

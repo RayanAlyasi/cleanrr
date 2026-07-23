@@ -157,6 +157,7 @@ async def test_start_with_no_overseerr_config_registers_no_tools(
 
     opts = captured_options["options"]
     assert opts.allowed_tools == []  # type: ignore[union-attr]
+    assert agent.overseerr_client is None
 
     await agent.stop()
 
@@ -430,10 +431,12 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
     # skip can_use_tool entirely, running the destructive action unconfirmed.
     assert "remove_my_request" not in opts.allowed_tools  # type: ignore[union-attr]
     assert agent.confirmation_registry is not None
+    assert agent.overseerr_client is not None
 
     await agent.stop()
-    # Registry stopped on stop()
+    # Registry and Overseerr client torn down on stop()
     assert agent.confirmation_registry is None
+    assert agent.overseerr_client is None
 
 
 def test_start_registers_write_tool_without_auto_approving_it(

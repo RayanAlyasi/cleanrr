@@ -9,6 +9,7 @@ from cleanrr.agent import Agent
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import CALLBACK_PREFIX
+from cleanrr.tools._user_request import _resolve_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -106,7 +107,39 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Usage: /invite <overseerr_username>")
         return
 
+    agent: Agent = context.application.bot_data[AGENT_KEY]
+    overseerr_client = agent.overseerr_client
+    if (
+        settings.overseerr_url is None
+        or settings.overseerr_api_key is None
+        or overseerr_client is None
+    ):
+        await update.message.reply_text(
+            "Overseerr isn't configured yet — ask the admin to set "
+            "OVERSEERR_URL and OVERSEERR_API_KEY."
+        )
+        return
+
     overseerr_username = args[0].lstrip("@")
+    base_url = str(settings.overseerr_url).rstrip("/")
+    _user_id, resolve_status = await _resolve_user_id(
+        overseerr_client, base_url, overseerr_username
+    )
+    if resolve_status == "user_not_found":
+        await update.message.reply_text(
+            f"Couldn't find an Overseerr user named '{overseerr_username}' — "
+            "check the username and try again."
+        )
+        return
+    if resolve_status == "http_error":
+        await update.message.reply_text(
+            "Couldn't reach Overseerr to verify that user — try again in a moment."
+        )
+        return
+    if resolve_status == "parse_error":
+        await update.message.reply_text("Unexpected response from Overseerr — try again later.")
+        return
+
     identity: Identity = context.application.bot_data[IDENTITY_KEY]
     code = await identity.issue_code(overseerr_username)
     await update.message.reply_text(
