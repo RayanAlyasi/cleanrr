@@ -341,6 +341,25 @@ async def test_cmd_invite_reports_overseerr_unreachable() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cmd_invite_reports_overseerr_parse_error() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["alice"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "parse_error"))):
+        await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "Unexpected response" in reply
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_cmd_invite_strips_leading_at_sign() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
