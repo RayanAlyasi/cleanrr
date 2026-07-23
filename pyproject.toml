@@ -61,7 +61,7 @@ select = [
 [tool.ruff.lint.per-file-ignores]
 # python-telegram-bot handlers have a framework-mandated signature
 # (`update`, `context`); `context` is often unused.
-"cleanrr/bot.py" = ["ARG001"]
+"cleanrr/handlers.py" = ["ARG001"]
 
 [tool.pyright]
 include = ["cleanrr", "tests"]

@@ -6,21 +6,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cleanrr import metrics
-from cleanrr.bot import (
+from cleanrr.bot import _on_shutdown, _on_startup, configure_logging
+from cleanrr.config import Settings
+from cleanrr.handlers import (
     AGENT_KEY,
     IDENTITY_KEY,
     SETTINGS_KEY,
-    _on_shutdown,
-    _on_startup,
     cmd_help,
     cmd_invite,
     cmd_link,
     cmd_start,
-    configure_logging,
     on_confirmation,
     on_message,
 )
-from cleanrr.config import Settings
 from cleanrr.permissions import ConfirmationRegistry
 
 
