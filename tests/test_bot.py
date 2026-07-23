@@ -617,6 +617,36 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
 
 
 @pytest.mark.asyncio
+async def test_on_confirmation_survives_stale_callback_query() -> None:
+    """A stale/expired callback query must not crash the handler or skip
+    resolving the confirmation — this is what happened live when Telegram
+    invalidated a button tap queued behind a still-in-flight message."""
+    from telegram.error import BadRequest
+
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    answer.side_effect = BadRequest("Query is too old and response timeout expired")
+
+    await on_confirmation(update, context)  # must not raise
+
+    assert pending.future.result() is True
+
+
+@pytest.mark.asyncio
 async def test_on_confirmation_rejects_wrong_user() -> None:
     registry = ConfirmationRegistry(ttl_seconds=60)
     cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
@@ -692,3 +722,6 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
 
     registered = [handler.callback for handler in app.handlers[0]]
     assert registered == [cmd_start, cmd_help, cmd_invite, cmd_link, on_confirmation, on_message]
+    # Must be enabled — a confirmation button tap has to reach on_confirmation
+    # while the message that triggered it is still blocked awaiting that tap.
+    assert app.concurrent_updates

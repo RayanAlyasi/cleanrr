@@ -1,7 +1,9 @@
 import logging
 import time
+from typing import Any
 
-from telegram import Update
+from telegram import CallbackQuery, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 import cleanrr.metrics as metrics
@@ -148,6 +150,15 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     )
 
 
+async def _safe_answer(query: CallbackQuery, *args: Any, **kwargs: Any) -> None:
+    """answerCallbackQuery fails if the query is stale (Telegram invalidates
+    it after a short window) — that's a routine race, not a bug to crash on."""
+    try:
+        await query.answer(*args, **kwargs)
+    except TelegramError:
+        logger.warning("failed to answer callback query", exc_info=True)
+
+
 async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None or update.effective_user is None:
@@ -156,23 +167,23 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     parts = query.data.split(":")
     if len(parts) != 4 or f"{parts[0]}:{parts[1]}:" != CALLBACK_PREFIX:
         logger.warning("malformed confirmation callback_data")
-        await query.answer()
+        await _safe_answer(query)
         return
     confirmation_id, decision = parts[2], parts[3]
     if decision not in ("yes", "no"):
         logger.warning("confirmation callback with unknown decision: %s", decision)
-        await query.answer()
+        await _safe_answer(query)
         return
 
     agent: Agent = context.application.bot_data[AGENT_KEY]
     registry = agent.confirmation_registry
     if registry is None:
-        await query.answer()
+        await _safe_answer(query)
         return
 
     pending = await registry.get(confirmation_id)
     if pending is None:
-        await query.answer()
+        await _safe_answer(query)
         try:
             await query.edit_message_text("This confirmation has expired.")
         except Exception:
@@ -182,10 +193,10 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # answerCallbackQuery only accepts ONE response per query; calling it
     # unconditionally up front would silently swallow this alert.
     if update.effective_user.id != pending.telegram_user_id:
-        await query.answer("This confirmation isn't for you.", show_alert=True)
+        await _safe_answer(query, "This confirmation isn't for you.", show_alert=True)
         return
 
-    await query.answer()
+    await _safe_answer(query)
     await registry.resolve(
         confirmation_id,
         telegram_user_id=update.effective_user.id,
