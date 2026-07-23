@@ -16,6 +16,7 @@ from claude_agent_sdk import (
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import (
+    WRITE_TOOLS,
     ConfirmationRegistry,
     build_confirmation_formatters,
     make_can_use_tool,
@@ -258,7 +259,10 @@ class Agent:
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}
-        self._options.allowed_tools = [t.name for t in tools]
+        # WRITE_TOOLS must NOT be pre-approved here: an allowed_tools entry
+        # auto-approves that tool and skips can_use_tool entirely, which would
+        # let destructive tools run with no confirmation prompt at all.
+        self._options.allowed_tools = [t.name for t in tools if t.name not in WRITE_TOOLS]
         self._options.tools = []
         self._options.strict_mcp_config = True
 
