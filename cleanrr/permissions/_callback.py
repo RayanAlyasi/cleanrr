@@ -32,6 +32,14 @@ WRITE_TOOLS: frozenset[str] = frozenset(
     }
 )
 
+# Tools that additionally require settings.admin_telegram_ids membership.
+# Checked here (before any Telegram prompt is sent) per OWASP's "deny by
+# default" / check-authorization-early guidance. The tool handler itself
+# re-checks admin status independently before mutating anything — that
+# check is the authoritative one (defense in depth); this one exists so a
+# non-admin never sees a confirmation prompt for a tool they can't use.
+ADMIN_ONLY_TOOLS: frozenset[str] = frozenset({"delete_torrent"})
+
 # CALLBACK_PREFIX uses ':' as a separator. The confirmation_id segment comes
 # from secrets.token_urlsafe(), which encodes to the RFC 4648 §5 URL-safe
 # alphabet [A-Za-z0-9_-] — no ':' — so split(':') stays unambiguous.
@@ -81,6 +89,15 @@ def make_can_use_tool(
         except LookupError:
             logger.error("can_use_tool fired without a telegram user contextvar")
             return PermissionResultDeny(message="internal error: no caller context")
+
+        if bare_name in ADMIN_ONLY_TOOLS and telegram_user_id not in settings.admin_telegram_ids:
+            metrics.tool_calls_total.labels(tool=bare_name, status="unauthorized").inc()
+            logger.warning(
+                "non-admin %s denied admin-only tool %s before confirmation prompt",
+                telegram_user_id,
+                bare_name,
+            )
+            return PermissionResultDeny(message="only the admin can run this tool")
 
         confirmation_id = await registry.reserve(
             tool_name=bare_name, telegram_user_id=telegram_user_id

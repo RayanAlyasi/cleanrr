@@ -20,9 +20,10 @@ logger = logging.getLogger(__name__)
 def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkMcpTool]:
     """Factory for destructive qBittorrent tools.
 
-    Admin-only. Gating happens after the confirmation flow runs — a non-admin
-    will see the confirmation prompt and a refusal on click. Bounded by the
-    per-user confirmation cap (3) so non-admin spam can't exhaust state.
+    Admin-only. cleanrr.permissions.ADMIN_ONLY_TOOLS denies non-admins before
+    any confirmation prompt is sent. The check below is a second, independent
+    enforcement point — defense in depth, not the primary gate — so a bug in
+    the permission callback can't let a non-admin mutation through.
     """
 
     @tool(
