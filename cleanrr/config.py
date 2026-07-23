@@ -1,9 +1,9 @@
 import os
 from pathlib import Path
-from typing import Self
+from typing import Annotated, Self
 
 from pydantic import Field, HttpUrl, IPvAnyAddress, SecretStr, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -34,7 +34,7 @@ class Settings(BaseSettings):
         description="Override the built-in bot persona. Empty means use the default.",
     )
 
-    admin_telegram_ids: set[int] = Field(
+    admin_telegram_ids: Annotated[set[int], NoDecode] = Field(
         default_factory=set,
         description="Telegram user IDs allowed to run /invite; empty disables /invite.",
     )

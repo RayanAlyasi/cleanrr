@@ -93,6 +93,32 @@ def test_telegram_max_message_chars_rejects_over_4096(monkeypatch: pytest.Monkey
         _settings()
 
 
+def test_admin_telegram_ids_single_value_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A single bare ID is valid JSON (a number), which previously bypassed the
+    CSV-split validator and reached pydantic as an int instead of a set."""
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("ADMIN_TELEGRAM_IDS", "6322869612")
+
+    assert _settings().admin_telegram_ids == {6322869612}
+
+
+def test_admin_telegram_ids_multiple_values_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("ADMIN_TELEGRAM_IDS", "123,456")
+
+    assert _settings().admin_telegram_ids == {123, 456}
+
+
+def test_admin_telegram_ids_empty_when_unset(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.delenv("ADMIN_TELEGRAM_IDS", raising=False)
+
+    assert _settings().admin_telegram_ids == set()
+
+
 def test_metrics_bind_address_default_is_localhost(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
