@@ -102,6 +102,35 @@ async def test_happy_path_deletes_owned_request(
 
 
 @pytest.mark.asyncio
+async def test_happy_path_falls_back_when_media_is_not_a_dict(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    weird_media_response = MagicMock()
+    weird_media_response.status_code = 200
+    weird_media_response.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "requestedBy": {"id": 42},
+        "media": "not-a-dict",
+    }
+    mock_client.get.side_effect = [_user_search_response(user_id=42), weird_media_response]
+    mock_client.delete.return_value = _delete_response(204)
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is False
+    assert "Unknown" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_unlinked_user_returns_error_without_http_calls(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
@@ -369,6 +398,30 @@ async def test_get_malformed_json_returns_error(
 
     assert result["is_error"] is True
     assert "format" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_get_non_dict_json_returns_error(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    non_dict_json = MagicMock()
+    non_dict_json.status_code = 200
+    non_dict_json.json.return_value = ["not", "a", "dict"]
+    mock_client.get.side_effect = [_user_search_response(user_id=42), non_dict_json]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "format" in result["content"][0]["text"].lower()
+    assert _tool_calls_value("remove_my_request", "parse_error") >= 1
 
 
 @pytest.mark.asyncio

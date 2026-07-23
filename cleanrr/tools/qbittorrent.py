@@ -7,7 +7,7 @@ from typing import Any
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
 
-import cleanrr.metrics
+import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._qbittorrent_auth import QbitAuthError, fetch_torrents, login
@@ -44,7 +44,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             or settings.qbittorrent_username is None
             or settings.qbittorrent_password is None
         ):
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="list_stalled_torrents", status="qbittorrent_not_configured"
             ).inc()
             return text_result(
@@ -56,15 +56,13 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
         try:
             caller_id = current_telegram_user_id.get()
         except LookupError:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="list_stalled_torrents", status="context_missing"
             ).inc()
             return text_result("Internal error — user context unavailable.", is_error=True)
 
         if caller_id not in settings.admin_telegram_ids:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_stalled_torrents", status="not_admin"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="not_admin").inc()
             return text_result("Only the admin can check stalled torrents.", is_error=False)
 
         base_url = str(settings.qbittorrent_url).rstrip("/")
@@ -73,7 +71,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             await login(qbit_client, base_url, settings)
         except QbitAuthError:
             logger.exception("qBittorrent login failed")
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="list_stalled_torrents", status="auth_failed"
             ).inc()
             return text_result(
@@ -85,12 +83,10 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             torrents, needs_reauth = await fetch_torrents(qbit_client, base_url)
         except httpx.HTTPError:
             logger.exception("qBittorrent HTTP error fetching torrents")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_stalled_torrents", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="http_error").inc()
             return text_result("qBittorrent unreachable — try again in a moment.", is_error=True)
         except ValueError:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="list_stalled_torrents", status="parse_error"
             ).inc()
             return text_result(
@@ -102,7 +98,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 await login(qbit_client, base_url, settings)
             except QbitAuthError:
                 logger.exception("qBittorrent re-login failed")
-                cleanrr.metrics.tool_calls_total.labels(
+                metrics.tool_calls_total.labels(
                     tool="list_stalled_torrents", status="auth_failed"
                 ).inc()
                 return text_result(
@@ -115,14 +111,14 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 torrents, _ = await fetch_torrents(qbit_client, base_url)
             except httpx.HTTPError:
                 logger.exception("qBittorrent HTTP error on retry")
-                cleanrr.metrics.tool_calls_total.labels(
+                metrics.tool_calls_total.labels(
                     tool="list_stalled_torrents", status="http_error"
                 ).inc()
                 return text_result(
                     "qBittorrent unreachable — try again in a moment.", is_error=True
                 )
             except ValueError:
-                cleanrr.metrics.tool_calls_total.labels(
+                metrics.tool_calls_total.labels(
                     tool="list_stalled_torrents", status="parse_error"
                 ).inc()
                 return text_result(
@@ -132,9 +128,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
         stalled = [t for t in torrents if t.get("state") in _STALLED_STATES][:10]
 
         if not stalled:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_stalled_torrents", status="success"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="success").inc()
             return text_result("No stalled torrents right now.", is_error=False)
 
         lines: list[str] = [f"Stalled torrents ({len(stalled)}):"]
@@ -156,9 +150,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
 
             lines.append(f"- {name} [{state}] {pct}% of {size_gb:.1f} GB — idle {age}")
 
-        cleanrr.metrics.tool_calls_total.labels(
-            tool="list_stalled_torrents", status="success"
-        ).inc()
+        metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="success").inc()
         return text_result("\n".join(lines), is_error=False)
 
     return [list_stalled_torrents]

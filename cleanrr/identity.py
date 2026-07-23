@@ -72,7 +72,9 @@ class Identity:
             (code, overseerr_username, now, now + int(self._code_ttl.total_seconds())),
         )
         await self._conn.commit()
-        logger.info("issued link code for overseerr user @%s", overseerr_username)
+        # Strip newlines so a hostile username can't inject fake log lines.
+        safe_username = overseerr_username.replace("\n", " ").replace("\r", " ")
+        logger.info("issued link code for overseerr user @%s", safe_username)
         metrics.link_codes_issued_total.inc()
         return code
 
@@ -105,7 +107,8 @@ class Identity:
             (telegram_user_id, overseerr_username, now),
         )
         await self._conn.commit()
-        logger.info("linked telegram %s to overseerr @%s", telegram_user_id, overseerr_username)
+        safe_username = overseerr_username.replace("\n", " ").replace("\r", " ")
+        logger.info("linked telegram %s to overseerr @%s", telegram_user_id, safe_username)
         metrics.link_codes_redeemed_total.labels(status="success").inc()
         metrics.linked_users.set(await self.user_count())
         return overseerr_username

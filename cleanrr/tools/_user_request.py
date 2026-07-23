@@ -55,8 +55,12 @@ async def _resolve_user_id(
 
     try:
         user_data = user_search.json()
-        users = user_data.get("results", [])
     except ValueError:
+        return None, "parse_error"
+    if not isinstance(user_data, dict):
+        return None, "parse_error"
+    users = user_data.get("results", [])
+    if not isinstance(users, list):
         return None, "parse_error"
 
     if not users:
@@ -113,13 +117,21 @@ async def find_user_request(
 
     try:
         requests_data = requests_resp.json()
-        requests_list = requests_data.get("results", [])
     except ValueError:
+        return UserRequestLookup(status="parse_error")
+    if not isinstance(requests_data, dict):
+        return UserRequestLookup(status="parse_error")
+    requests_list = requests_data.get("results", [])
+    if not isinstance(requests_list, list):
         return UserRequestLookup(status="parse_error")
 
     title_to_request: dict[str, dict[str, Any]] = {}
     for req in requests_list:
+        if not isinstance(req, dict):
+            continue
         media = req.get("media", {})
+        if not isinstance(media, dict):
+            continue
         media_title = media.get("title") or media.get("name")
         if media_title:
             title_to_request[media_title] = req

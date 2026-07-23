@@ -8,7 +8,7 @@ from typing import Any
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
 
-import cleanrr.metrics
+import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
@@ -42,7 +42,7 @@ def build_tools(
         title_input = args.get("title", "").strip()
 
         if settings.sonarr_url is None or settings.sonarr_api_key is None:
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="force_research_show", status="sonarr_not_configured"
             ).inc()
             return text_result(
@@ -53,15 +53,11 @@ def build_tools(
         lookup = await find_user_request(overseerr_client, identity, settings, title_input)
         error_response = render_lookup_error(lookup, title_input)
         if error_response is not None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status=lookup.status
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status=lookup.status).inc()
             return error_response
 
         if lookup.request is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="http_error").inc()
             return text_result(
                 "An error occurred while looking up your request — try again in a moment.",
                 is_error=True,
@@ -70,9 +66,7 @@ def build_tools(
         media = lookup.request.get("media", {})
         tvdb_id = media.get("tvdbId")
         if not tvdb_id:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="not_a_show"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="not_a_show").inc()
             return text_result(
                 "That looks like a movie — try force_research_movie instead.",
                 is_error=False,
@@ -85,29 +79,23 @@ def build_tools(
             )
         except httpx.HTTPError:
             logger.exception("Sonarr HTTP error looking up series")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="http_error").inc()
             return text_result("Couldn't reach Sonarr — try again in a moment.", is_error=True)
 
         if series_resp.status_code != 200:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="http_error").inc()
             return text_result("Couldn't reach Sonarr — try again in a moment.", is_error=True)
 
         try:
             series_data = series_resp.json()
         except ValueError:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="parse_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="parse_error").inc()
             return text_result(
                 "Unexpected response format from Sonarr — try again later.", is_error=True
             )
 
         if not series_data or not isinstance(series_data, list):
-            cleanrr.metrics.tool_calls_total.labels(
+            metrics.tool_calls_total.labels(
                 tool="force_research_show", status="not_in_sonarr"
             ).inc()
             return text_result(
@@ -118,9 +106,7 @@ def build_tools(
 
         first = series_data[0]
         if not isinstance(first, dict):
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="parse_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="parse_error").inc()
             return text_result(
                 "Unexpected response format from Sonarr — try again later.", is_error=True
             )
@@ -128,9 +114,7 @@ def build_tools(
         series_id = first.get("id")
         title = str(first.get("title") or "Unknown")[:80]
         if not isinstance(series_id, int):
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="parse_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="parse_error").inc()
             return text_result(
                 "Unexpected response format from Sonarr — try again later.", is_error=True
             )
@@ -142,15 +126,11 @@ def build_tools(
             )
         except httpx.HTTPError:
             logger.exception("Sonarr HTTP error issuing SeriesSearch")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="http_error").inc()
             return text_result("Couldn't reach Sonarr — try again in a moment.", is_error=True)
 
         if cmd_resp.status_code not in (200, 201, 202):
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="force_research_show", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="force_research_show", status="http_error").inc()
             return text_result(
                 f"Sonarr refused the search command (status {cmd_resp.status_code}).",
                 is_error=True,
@@ -166,7 +146,7 @@ def build_tools(
             series_id,
             log_title,
         )
-        cleanrr.metrics.tool_calls_total.labels(tool="force_research_show", status="success").inc()
+        metrics.tool_calls_total.labels(tool="force_research_show", status="success").inc()
         return text_result(f"Triggered re-search for '{title}'.", is_error=False)
 
     return [force_research_show]

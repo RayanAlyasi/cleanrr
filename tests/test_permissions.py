@@ -13,14 +13,15 @@ from cleanrr.config import Settings
 from cleanrr.permissions import (
     WRITE_TOOLS,
     ConfirmationRegistry,
-    _request_status_label,
     build_confirmation_formatters,
     make_can_use_tool,
 )
+from cleanrr.permissions._callback import ADMIN_ONLY_TOOLS
+from cleanrr.permissions._formatters import _request_status_label
 from cleanrr.tools._context import current_telegram_user_id
 
 
-def _settings(ttl: float = 60.0) -> Settings:
+def _settings(ttl: float = 60.0, admin_ids: set[int] | None = None) -> Settings:
     return Settings(
         _env_file=None,  # type: ignore[call-arg]
         telegram_bot_token="t",  # type: ignore[arg-type]
@@ -28,6 +29,7 @@ def _settings(ttl: float = 60.0) -> Settings:
         confirmation_ttl_seconds=ttl,
         overseerr_url="http://overseerr:5055",  # type: ignore[arg-type]
         overseerr_api_key="key",  # type: ignore[arg-type]
+        admin_telegram_ids=admin_ids or set(),
     )
 
 
@@ -318,6 +320,51 @@ async def test_write_tool_times_out_when_no_click() -> None:
 
     assert isinstance(result, PermissionResultDeny)
     assert _counter("remove_my_request", "timed_out") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_admin_only_tool_denies_non_admin_before_prompt() -> None:
+    """ADMIN_ONLY_TOOLS must deny before any confirmation prompt is sent."""
+    assert "delete_torrent" in ADMIN_ONLY_TOOLS
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()  # no admin_telegram_ids
+
+    before = cleanrr.metrics.tool_calls_total.labels(
+        tool="delete_torrent", status="unauthorized"
+    )._value.get()
+    cb = make_can_use_tool(bot, reg, settings, formatters={})
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert isinstance(result, PermissionResultDeny)
+    bot.send_message.assert_not_awaited()
+    after = cleanrr.metrics.tool_calls_total.labels(
+        tool="delete_torrent", status="unauthorized"
+    )._value.get()
+    assert after == before + 1
+
+
+@pytest.mark.asyncio
+async def test_admin_only_tool_reaches_prompt_for_admin() -> None:
+    """An admin caller still goes through the normal confirmation flow."""
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=0.1)
+    settings = _settings(ttl=0.1, admin_ids={42})
+    cb = make_can_use_tool(bot, reg, settings, formatters={})
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
+    finally:
+        current_telegram_user_id.reset(token)
+
+    bot.send_message.assert_awaited_once()
+    assert isinstance(result, PermissionResultDeny)  # timed out — no click in this test
 
 
 @pytest.mark.asyncio
@@ -619,6 +666,28 @@ async def test_can_use_tool_denies_when_send_message_fails() -> None:
 
     assert isinstance(result, PermissionResultDeny)
     assert _counter("remove_my_request", "denied") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_can_use_tool_falls_back_when_formatter_crashes() -> None:
+    """A buggy formatter must not break the confirmation flow."""
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=0.1)
+    settings = _settings(ttl=0.1)
+
+    async def bad_formatter(_tool_args: dict[str, Any]) -> str:
+        raise ValueError("boom")
+
+    cb = make_can_use_tool(bot, reg, settings, formatters={"remove_my_request": bad_formatter})
+
+    token = current_telegram_user_id.set(42)
+    try:
+        await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+    finally:
+        current_telegram_user_id.reset(token)
+
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.call_args.kwargs["text"] == "Run remove_my_request?"
 
 
 @pytest.mark.asyncio

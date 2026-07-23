@@ -4,7 +4,7 @@ from typing import Any
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
 
-import cleanrr.metrics
+import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
@@ -17,18 +17,18 @@ logger = logging.getLogger(__name__)
 
 def _user_id_error_response(tool_name: str, resolve_status: str) -> dict[str, Any]:
     if resolve_status == "user_not_found":
-        cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="user_not_found").inc()
+        metrics.tool_calls_total.labels(tool=tool_name, status="user_not_found").inc()
         return text_result(
             "Couldn't find your Overseerr account — admin may need to re-issue the link.",
             is_error=False,
         )
     if resolve_status == "parse_error":
-        cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="parse_error").inc()
+        metrics.tool_calls_total.labels(tool=tool_name, status="parse_error").inc()
         return text_result(
             "Unexpected response format from Overseerr — try again later.",
             is_error=True,
         )
-    cleanrr.metrics.tool_calls_total.labels(tool=tool_name, status="http_error").inc()
+    metrics.tool_calls_total.labels(tool=tool_name, status="http_error").inc()
     return text_result(
         "Couldn't reach Overseerr — try again in a moment.",
         is_error=True,
@@ -45,14 +45,12 @@ def build_tools(
         "List the Overseerr media requests made by the user who is currently chatting. "
         "Use this when the user asks 'where's my movie?', 'what did I request?', or any variation. "
         "Returns request titles and statuses.",
-        {"status": str},
+        {},
     )
     async def list_my_requests(_args: dict[str, Any]) -> dict[str, Any]:
         # 1. Check if Overseerr is configured
         if settings.overseerr_url is None or settings.overseerr_api_key is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_my_requests", status="not_configured"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_my_requests", status="not_configured").inc()
             return text_result(
                 "Overseerr isn't configured yet — ask the admin to set "
                 "OVERSEERR_URL and OVERSEERR_API_KEY.",
@@ -64,17 +62,13 @@ def build_tools(
             telegram_user_id = current_telegram_user_id.get()
         except LookupError:
             logger.exception("ContextVar not set in tool")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_my_requests", status="context_missing"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_my_requests", status="context_missing").inc()
             return text_result("Internal error — couldn't identify caller.", is_error=True)
 
         # 3. Resolve telegram ID → Overseerr username
         overseerr_username = await identity.get_link(telegram_user_id)
         if overseerr_username is None:
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_my_requests", status="unlinked_user"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_my_requests", status="unlinked_user").inc()
             return text_result(
                 "You haven't linked your Overseerr account yet. Send /link <code> "
                 "first (ask the admin for a code).",
@@ -93,9 +87,7 @@ def build_tools(
                 params={"take": 20},
             )
             if requests_resp.status_code != 200:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="list_my_requests", status="http_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="list_my_requests", status="http_error").inc()
                 return text_result(
                     "Couldn't fetch your requests — try again in a moment.",
                     is_error=True,
@@ -105,18 +97,14 @@ def build_tools(
                 requests_data = requests_resp.json()
                 requests_list = requests_data.get("results", [])
             except ValueError:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="list_my_requests", status="parse_error"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="list_my_requests", status="parse_error").inc()
                 return text_result(
                     "Unexpected response format from Overseerr — try again later.",
                     is_error=True,
                 )
 
             if not requests_list:
-                cleanrr.metrics.tool_calls_total.labels(
-                    tool="list_my_requests", status="success"
-                ).inc()
+                metrics.tool_calls_total.labels(tool="list_my_requests", status="success").inc()
                 return text_result(
                     "You haven't requested anything via Overseerr yet.",
                     is_error=False,
@@ -137,14 +125,12 @@ def build_tools(
                 else:
                     lines.append(f"- {title} — {status_label}")
 
-            cleanrr.metrics.tool_calls_total.labels(tool="list_my_requests", status="success").inc()
+            metrics.tool_calls_total.labels(tool="list_my_requests", status="success").inc()
             return text_result("\n".join(lines), is_error=False)
 
         except Exception:
             logger.exception("Overseerr tool error")
-            cleanrr.metrics.tool_calls_total.labels(
-                tool="list_my_requests", status="http_error"
-            ).inc()
+            metrics.tool_calls_total.labels(tool="list_my_requests", status="http_error").inc()
             return text_result(
                 "An error occurred while fetching your requests — try again in a moment.",
                 is_error=True,
@@ -162,7 +148,7 @@ def build_tools(
 
         lookup = await find_user_request(client, identity, settings, title_input)
         metric_status = "success" if lookup.status == "ok" else lookup.status
-        cleanrr.metrics.tool_calls_total.labels(tool="find_my_request", status=metric_status).inc()
+        metrics.tool_calls_total.labels(tool="find_my_request", status=metric_status).inc()
 
         error_response = render_lookup_error(lookup, title_input)
         if error_response is not None:

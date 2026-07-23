@@ -131,6 +131,16 @@ def test_format_status_label_combinations(
 # ---------------------------------------------------------------------------
 
 
+def test_list_my_requests_has_no_input_schema(
+    mock_identity: MagicMock, mock_client: AsyncMock
+) -> None:
+    """The tool takes no arguments — it always returns the caller's full list."""
+    tools = build_tools(mock_client, mock_identity, _settings())
+    tool_fn = tools[0]
+    assert tool_fn.name == "list_my_requests"
+    assert tool_fn.input_schema == {}
+
+
 @pytest.mark.asyncio
 async def test_list_my_requests_not_configured(
     mock_identity: MagicMock, mock_client: AsyncMock
