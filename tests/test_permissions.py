@@ -429,6 +429,28 @@ async def test_remove_my_request_formatter_enriches_with_title() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remove_my_request_formatter_resolves_title_from_real_overseerr_shape() -> None:
+    """Real Overseerr requests carry only tmdbId, never a title/name."""
+    client = AsyncMock()
+    request_resp = MagicMock()
+    request_resp.status_code = 200
+    request_resp.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "media": {"mediaType": "movie", "tmdbId": 194},
+    }
+    movie_detail_resp = MagicMock()
+    movie_detail_resp.status_code = 200
+    movie_detail_resp.json.return_value = {"id": 194, "title": "Amélie"}
+    client.get.side_effect = [request_resp, movie_detail_resp]
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+
+    assert "Amélie" in text
+
+
+@pytest.mark.asyncio
 async def test_remove_my_request_formatter_falls_back_on_http_error() -> None:
     import httpx as _httpx
 

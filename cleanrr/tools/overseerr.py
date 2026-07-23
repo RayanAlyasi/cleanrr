@@ -10,7 +10,12 @@ from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
-from cleanrr.tools._user_request import _resolve_user_id, find_user_request, render_lookup_error
+from cleanrr.tools._user_request import (
+    _resolve_user_id,
+    enrich_titles_with_names,
+    find_user_request,
+    render_lookup_error,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +114,8 @@ def build_tools(
                     "You haven't requested anything via Overseerr yet.",
                     is_error=False,
                 )
+
+            await enrich_titles_with_names(client, base_url, requests_list)
 
             lines = [f"You have {len(requests_list)} Overseerr request(s):"]
             for req in requests_list:

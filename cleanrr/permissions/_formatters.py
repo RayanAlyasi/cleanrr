@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from cleanrr.config import Settings
+from cleanrr.tools._user_request import _fetch_media_title
 
 _FORMATTER_TIMEOUT_SECONDS = 1.5
 
@@ -41,6 +42,18 @@ def _build_remove_my_request_formatter(
         except ValueError:
             return fallback
         media = data.get("media") or {}
+        media_type_raw = media.get("mediaType")
+        tmdb_id = media.get("tmdbId")
+        if media_type_raw in ("movie", "tv") and isinstance(tmdb_id, int):
+            try:
+                resolved_title = await asyncio.wait_for(
+                    _fetch_media_title(overseerr_client, base_url, media_type_raw, tmdb_id),
+                    timeout=_FORMATTER_TIMEOUT_SECONDS,
+                )
+            except TimeoutError:
+                resolved_title = None
+            if resolved_title:
+                media["title" if media_type_raw == "movie" else "name"] = resolved_title
         # Overseerr title/name fields come from external metadata and may be
         # arbitrarily long; cap so a hostile entry can't blow past Telegram's
         # 4096-char message limit.

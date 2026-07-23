@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import difflib
 import logging
 import re
@@ -18,6 +19,61 @@ logger = logging.getLogger(__name__)
 _REQUEST_FETCH_LIMIT = 50
 _FUZZY_MATCH_CUTOFF = 0.4
 _YEAR_PATTERN = re.compile(r"\s*\(?\b(19|20)\d{2}\b\)?\s*$")
+# Caps concurrent /movie or /tv detail calls per enrich_titles_with_names() batch —
+# a self-hosted Overseerr shouldn't take 50 simultaneous requests for one lookup.
+_TITLE_FETCH_CONCURRENCY = 8
+
+
+async def _fetch_media_title(
+    client: httpx.AsyncClient, base_url: str, media_type: str, tmdb_id: int
+) -> str | None:
+    """Look up a movie/show's display name.
+
+    Overseerr's request-list endpoints return only tmdbId/tvdbId — the title
+    or name comes solely from the per-item /movie or /tv detail endpoint
+    (movies key it "title", TV shows key it "name").
+    """
+    endpoint = "movie" if media_type == "movie" else "tv"
+    try:
+        resp = await client.get(f"{base_url}/api/v1/{endpoint}/{tmdb_id}")
+    except httpx.HTTPError:
+        return None
+    if resp.status_code != 200:
+        return None
+    try:
+        data = resp.json()
+    except ValueError:
+        return None
+    if not isinstance(data, dict):
+        return None
+    title = data.get("title") or data.get("name")
+    return str(title) if title else None
+
+
+async def enrich_titles_with_names(
+    client: httpx.AsyncClient, base_url: str, requests_list: list[Any]
+) -> None:
+    """Fill in each request's media title/name in place, fetched concurrently.
+
+    No-op for entries that aren't dicts, lack a usable mediaType/tmdbId, or
+    fail to resolve — callers already fall back to "Unknown" for those.
+    """
+    semaphore = asyncio.Semaphore(_TITLE_FETCH_CONCURRENCY)
+
+    async def _fill(req: dict[str, Any]) -> None:
+        media = req.get("media")
+        if not isinstance(media, dict):
+            return
+        media_type = media.get("mediaType")
+        tmdb_id = media.get("tmdbId")
+        if media_type not in ("movie", "tv") or not isinstance(tmdb_id, int):
+            return
+        async with semaphore:
+            title = await _fetch_media_title(client, base_url, media_type, tmdb_id)
+        if title:
+            media["title" if media_type == "movie" else "name"] = title
+
+    await asyncio.gather(*(_fill(req) for req in requests_list if isinstance(req, dict)))
 
 
 @dataclass
@@ -124,6 +180,8 @@ async def find_user_request(
     requests_list = requests_data.get("results", [])
     if not isinstance(requests_list, list):
         return UserRequestLookup(status="parse_error")
+
+    await enrich_titles_with_names(overseerr_client, base_url, requests_list)
 
     title_to_request: dict[str, dict[str, Any]] = {}
     for req in requests_list:

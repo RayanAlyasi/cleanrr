@@ -13,7 +13,7 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
-from cleanrr.tools._user_request import _resolve_user_id
+from cleanrr.tools._user_request import _fetch_media_title, _resolve_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -146,6 +146,12 @@ def build_tools(
             media = request_data.get("media")
             if not isinstance(media, dict):
                 media = {}
+            media_type = media.get("mediaType")
+            tmdb_id = media.get("tmdbId")
+            if media_type in ("movie", "tv") and isinstance(tmdb_id, int):
+                resolved_title = await _fetch_media_title(client, base_url, media_type, tmdb_id)
+                if resolved_title:
+                    media["title" if media_type == "movie" else "name"] = resolved_title
             title = str(media.get("title") or media.get("name") or "Unknown")[:80]
             # Strip newlines so a hostile title can't inject fake log lines.
             log_title = title.replace("\n", " ").replace("\r", " ")

@@ -131,6 +131,44 @@ async def test_happy_path_falls_back_when_media_is_not_a_dict(
 
 
 @pytest.mark.asyncio
+async def test_happy_path_resolves_title_from_real_overseerr_shape(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Real Overseerr requests carry only tmdbId, never a title/name."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+    request_response = MagicMock()
+    request_response.status_code = 200
+    request_response.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "requestedBy": {"id": 42},
+        "media": {"mediaType": "tv", "tmdbId": 1685},
+    }
+    tv_detail_response = MagicMock()
+    tv_detail_response.status_code = 200
+    tv_detail_response.json.return_value = {"id": 1685, "name": "Project Runway"}
+
+    mock_client.get.side_effect = [
+        _user_search_response(user_id=42),
+        request_response,
+        tv_detail_response,
+    ]
+    mock_client.delete.return_value = _delete_response(204)
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"request_id": 7})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is False
+    assert "Project Runway" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_unlinked_user_returns_error_without_http_calls(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:

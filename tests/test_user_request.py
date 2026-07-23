@@ -8,7 +8,12 @@ import pytest
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
-from cleanrr.tools._user_request import _resolve_user_id, find_user_request
+from cleanrr.tools._user_request import (
+    _fetch_media_title,
+    _resolve_user_id,
+    enrich_titles_with_names,
+    find_user_request,
+)
 
 
 def _settings(**overrides: object) -> Settings:
@@ -401,3 +406,128 @@ async def test_find_user_request_year_stripped_from_query(
         assert result.request["media"]["title"] == "Severance"
     finally:
         current_telegram_user_id.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _fetch_media_title / enrich_titles_with_names
+#
+# Real Overseerr responses never embed a title or name on request/media
+# objects — only tmdbId/tvdbId. These must be resolved separately via the
+# per-item /movie or /tv detail endpoint.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_title_movie(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 194, "title": "Amélie"}
+    mock_client.get.return_value = resp
+
+    title = await _fetch_media_title(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert title == "Amélie"
+    mock_client.get.assert_awaited_once_with("http://overseerr:5055/api/v1/movie/194")
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_title_tv_uses_name_field(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 1685, "name": "Project Runway"}
+    mock_client.get.return_value = resp
+
+    title = await _fetch_media_title(mock_client, "http://overseerr:5055", "tv", 1685)
+
+    assert title == "Project Runway"
+    mock_client.get.assert_awaited_once_with("http://overseerr:5055/api/v1/tv/1685")
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_title_returns_none_on_http_error(mock_client: AsyncMock) -> None:
+    mock_client.get.side_effect = httpx.HTTPError("boom")
+
+    title = await _fetch_media_title(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert title is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_title_returns_none_on_non_200(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 404
+    mock_client.get.return_value = resp
+
+    title = await _fetch_media_title(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert title is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_title_returns_none_on_malformed_json(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    mock_client.get.return_value = resp
+
+    title = await _fetch_media_title(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert title is None
+
+
+@pytest.mark.asyncio
+async def test_enrich_titles_skips_entries_without_tmdb_id(mock_client: AsyncMock) -> None:
+    requests_list = [{"id": 1, "media": {"mediaType": "movie"}}]
+
+    await enrich_titles_with_names(mock_client, "http://overseerr:5055", requests_list)
+
+    mock_client.get.assert_not_awaited()
+    assert "title" not in requests_list[0]["media"]
+
+
+@pytest.mark.asyncio
+async def test_enrich_titles_skips_non_dict_entries(mock_client: AsyncMock) -> None:
+    requests_list: list[object] = ["not-a-dict", 42, None]
+
+    await enrich_titles_with_names(mock_client, "http://overseerr:5055", requests_list)
+
+    mock_client.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_resolves_title_when_media_lacks_one(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """The real bug: Overseerr's request list has no title, so without
+    resolving it first, fuzzy-matching against user input can never match
+    anything — every real request was silently unmatchable."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"mediaType": "tv", "tmdbId": 1685, "status": 5}}
+        ]
+    }
+
+    tv_detail_resp = MagicMock()
+    tv_detail_resp.status_code = 200
+    tv_detail_resp.json.return_value = {"id": 1685, "name": "Severance"}
+
+    mock_client.get.side_effect = [user_resp, req_resp, tv_detail_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "severance")
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result.status == "ok"
+    assert result.request is not None
+    assert result.request["media"]["name"] == "Severance"
+    mock_client.get.assert_any_call("http://overseerr:5055/api/v1/tv/1685")
