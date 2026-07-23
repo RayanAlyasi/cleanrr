@@ -456,12 +456,14 @@ async def test_on_startup_starts_agent_and_identity() -> None:
 
     app = MagicMock()
     app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot.set_my_commands = AsyncMock()
 
     with patch("cleanrr.bot.metrics.start") as mock_metrics_start:
         await _on_startup(app)
 
     agent.start.assert_awaited_once()
     identity.start.assert_awaited_once()
+    app.bot.set_my_commands.assert_awaited_once()
     mock_metrics_start.assert_not_called()
 
 
@@ -476,6 +478,7 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
 
     app = MagicMock()
     app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot.set_my_commands = AsyncMock()
 
     with (
         patch("cleanrr.bot.metrics.start") as mock_metrics_start,
