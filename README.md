@@ -109,6 +109,15 @@ All configuration is via environment variables — no code edits needed. See [`.
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
+| `OVERSEERR_URL` | — | Base URL of your Overseerr instance (e.g. `http://overseerr:5055`). |
+| `OVERSEERR_API_KEY` | — | Overseerr API key (Settings → General → API Key). |
+| `OVERSEERR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Overseerr API calls in seconds. |
+| `SONARR_URL` | — | Base URL of your Sonarr instance (e.g. `http://sonarr:8989`). |
+| `SONARR_API_KEY` | — | Sonarr API key (Settings → General → API Key). |
+| `SONARR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Sonarr API calls in seconds. |
+| `RADARR_URL` | — | Base URL of your Radarr instance (e.g. `http://radarr:7878`). |
+| `RADARR_API_KEY` | — | Radarr API key (Settings → General → API Key). |
+| `RADARR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Radarr API calls in seconds. |
 | `QBITTORRENT_URL` | — | Base URL of your qBittorrent WebUI (e.g. `http://qbittorrent:8080`). |
 | `QBITTORRENT_USERNAME` | — | qBittorrent WebUI username. |
 | `QBITTORRENT_PASSWORD` | — | qBittorrent WebUI password. |
@@ -137,11 +146,15 @@ Single Python process, single container. Tools are defined as in-process `@tool`
 ```
 cleanrr/
 ├── __main__.py        # entrypoint (python -m cleanrr)
-├── bot.py             # Telegram handlers + application wiring
+├── bot.py             # application wiring + lifecycle (startup/shutdown)
+├── handlers.py        # Telegram command/message/callback handlers
 ├── agent.py           # ClaudeSDKClient wrapper with per-user sessions
 ├── identity.py        # SQLite link-code store + Telegram↔Overseerr mapping
 ├── metrics.py         # Prometheus metrics (opt-in)
-└── config.py          # pydantic-settings + auth validation
+├── config.py          # pydantic-settings + auth validation
+├── permissions/       # destructive-action confirmation flow (registry,
+│                      #   prompt formatters, can_use_tool callback)
+└── tools/             # read + write @tool wrappers for Overseerr/Sonarr/Radarr/qBittorrent
 ```
 
 ## Roadmap
