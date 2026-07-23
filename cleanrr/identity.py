@@ -72,8 +72,7 @@ class Identity:
             (code, overseerr_username, now, now + int(self._code_ttl.total_seconds())),
         )
         await self._conn.commit()
-        # overseerr_username is admin-supplied (/invite) but still external input;
-        # strip newlines so it can't inject fake log lines.
+        # Strip newlines so a hostile username can't inject fake log lines.
         safe_username = overseerr_username.replace("\n", " ").replace("\r", " ")
         logger.info("issued link code for overseerr user @%s", safe_username)
         metrics.link_codes_issued_total.inc()

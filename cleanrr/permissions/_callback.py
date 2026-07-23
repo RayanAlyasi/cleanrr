@@ -32,12 +32,9 @@ WRITE_TOOLS: frozenset[str] = frozenset(
     }
 )
 
-# Tools that additionally require settings.admin_telegram_ids membership.
-# Checked here (before any Telegram prompt is sent) per OWASP's "deny by
-# default" / check-authorization-early guidance. The tool handler itself
-# re-checks admin status independently before mutating anything — that
-# check is the authoritative one (defense in depth); this one exists so a
-# non-admin never sees a confirmation prompt for a tool they can't use.
+# Denied here, before any Telegram prompt is sent. The tool handler still
+# re-checks admin status independently before mutating anything (defense
+# in depth) — this is an earlier, additional gate, not a replacement.
 ADMIN_ONLY_TOOLS: frozenset[str] = frozenset({"delete_torrent"})
 
 # CALLBACK_PREFIX uses ':' as a separator. The confirmation_id segment comes
