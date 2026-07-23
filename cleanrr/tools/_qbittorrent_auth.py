@@ -33,7 +33,13 @@ async def login(client: httpx.AsyncClient, base_url: str, settings: Settings) ->
     except httpx.HTTPError as exc:
         raise QbitAuthError(str(exc)) from exc
 
-    if resp.status_code != 200 or resp.text.strip() != "Ok.":
+    # Login response shape varies by qBittorrent WebUI API version: older
+    # releases return 200 with body "Ok." ("Fails." on bad credentials, also
+    # 200); confirmed against a live 5.2.0 instance, newer releases return 204
+    # with an empty body and set the session cookie, or 401 with no cookie on
+    # bad credentials. Accept either success shape.
+    ok = resp.status_code == 204 or (resp.status_code == 200 and resp.text.strip() == "Ok.")
+    if not ok:
         raise QbitAuthError(f"login rejected (status={resp.status_code})")
 
 

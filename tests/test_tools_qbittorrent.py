@@ -153,6 +153,53 @@ async def test_auth_failed_wrong_password_body(
 
 
 @pytest.mark.asyncio
+async def test_login_succeeds_on_204_empty_body(
+    mock_qbit_client: AsyncMock, settings: Settings
+) -> None:
+    """Confirmed against a live qBittorrent 5.2.0: success is 204 + empty
+    body + Set-Cookie, not the older 200 + "Ok." convention."""
+    login_resp = MagicMock()
+    login_resp.status_code = 204
+    login_resp.text = ""
+    torrents_resp = MagicMock()
+    torrents_resp.status_code = 200
+    torrents_resp.json.return_value = []
+    mock_qbit_client.post.return_value = login_resp
+    mock_qbit_client.get.return_value = torrents_resp
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        assert result["is_error"] is False
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_auth_failed_on_401(mock_qbit_client: AsyncMock, settings: Settings) -> None:
+    """Confirmed against a live qBittorrent 5.2.0: bad credentials return 401
+    with body "Unauthorized", not the older 200 + "Fails." convention."""
+    login_resp = MagicMock()
+    login_resp.status_code = 401
+    login_resp.text = "Unauthorized"
+    mock_qbit_client.post.return_value = login_resp
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        assert result["is_error"] is True
+        assert "qBittorrent auth failed" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_auth_failed_http_exception_on_login(
     mock_qbit_client: AsyncMock, settings: Settings
 ) -> None:
