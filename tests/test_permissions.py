@@ -669,6 +669,28 @@ async def test_can_use_tool_denies_when_send_message_fails() -> None:
 
 
 @pytest.mark.asyncio
+async def test_can_use_tool_falls_back_when_formatter_crashes() -> None:
+    """A buggy formatter must not break the confirmation flow."""
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=0.1)
+    settings = _settings(ttl=0.1)
+
+    async def bad_formatter(_tool_args: dict[str, Any]) -> str:
+        raise ValueError("boom")
+
+    cb = make_can_use_tool(bot, reg, settings, formatters={"remove_my_request": bad_formatter})
+
+    token = current_telegram_user_id.set(42)
+    try:
+        await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+    finally:
+        current_telegram_user_id.reset(token)
+
+    bot.send_message.assert_awaited_once()
+    assert bot.send_message.call_args.kwargs["text"] == "Run remove_my_request?"
+
+
+@pytest.mark.asyncio
 async def test_sweeper_actively_evicts_expired_entries() -> None:
     """The background sweep loop must evict entries without anyone calling get().
 

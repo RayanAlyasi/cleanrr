@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cleanrr import metrics
-from cleanrr.bot import _on_shutdown, _on_startup, configure_logging
+from cleanrr.agent import Agent
+from cleanrr.bot import _on_shutdown, _on_startup, build_application, configure_logging
 from cleanrr.config import Settings
 from cleanrr.handlers import (
     AGENT_KEY,
@@ -19,6 +20,7 @@ from cleanrr.handlers import (
     on_confirmation,
     on_message,
 )
+from cleanrr.identity import Identity
 from cleanrr.permissions import ConfirmationRegistry
 
 
@@ -589,3 +591,15 @@ async def test_on_confirmation_no_op_when_registry_unavailable() -> None:
     await on_confirmation(update, context)
 
     update.callback_query.edit_message_text.assert_not_awaited()
+
+
+def test_build_application_wires_bot_data_and_handlers() -> None:
+    settings = _make_settings()
+    app = build_application(settings)
+
+    assert app.bot_data[SETTINGS_KEY] is settings
+    assert isinstance(app.bot_data[AGENT_KEY], Agent)
+    assert isinstance(app.bot_data[IDENTITY_KEY], Identity)
+
+    registered = [handler.callback for handler in app.handlers[0]]
+    assert registered == [cmd_start, cmd_help, cmd_invite, cmd_link, on_confirmation, on_message]

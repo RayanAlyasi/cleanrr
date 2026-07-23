@@ -126,6 +126,18 @@ async def test_resolve_user_id_non_list_results(mock_client: AsyncMock) -> None:
     assert label == "parse_error"
 
 
+@pytest.mark.asyncio
+async def test_resolve_user_id_non_dict_result_entry(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": ["not-a-dict"]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "parse_error"
+
+
 # ---------------------------------------------------------------------------
 # find_user_request
 # ---------------------------------------------------------------------------
