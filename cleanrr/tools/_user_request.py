@@ -278,7 +278,7 @@ def render_lookup_error(lookup: UserRequestLookup, title_input: str) -> dict[str
     if lookup.status == "no_match":
         return text_result(
             f"I couldn't find a request matching '{title_input[:50]}'. "
-            "Try /list to see all your requests.",
+            "Ask me to list your requests to see everything you've requested.",
             is_error=False,
         )
     if lookup.status == "multi_match":
