@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.5.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.1...v0.5.2) (2026-07-23)
+
+
+### Bug Fixes
+
+* resolve whole-project audit findings ([#64](https://github.com/RayanAlyasi/cleanrr/issues/64)) ([4dd99ca](https://github.com/RayanAlyasi/cleanrr/commit/4dd99ca7dfbd593b863b999a4babebe5a0fc782b))
+
 ## [0.5.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.0...v0.5.1) (2026-05-25)
 
 
