@@ -17,7 +17,8 @@ from cleanrr.tools._results import text_result
 logger = logging.getLogger(__name__)
 
 _REQUEST_FETCH_LIMIT = 50
-_FUZZY_MATCH_CUTOFF = 0.4
+_FUZZY_MATCH_CUTOFF = 0.6
+_FUZZY_MATCH_LIMIT = 3
 _YEAR_PATTERN = re.compile(r"\s*\(?\b(19|20)\d{2}\b\)?\s*$")
 # Caps concurrent /movie or /tv detail calls per enrich_titles_with_names() batch —
 # a self-hosted Overseerr shouldn't take 50 simultaneous requests for one lookup.
@@ -95,6 +96,33 @@ class UserRequestLookup:
 
 
 ResolveUserStatus = Literal["ok", "user_not_found", "http_error", "parse_error"]
+
+
+def _title_match_score(query: str, candidate: str) -> float:
+    """Score how well a candidate title matches a user's (lowercased) query.
+
+    Plain difflib.SequenceMatcher.ratio() can't be trusted alone: it penalizes
+    length differences, so a short, correct partial query like "dune" against
+    "dune part one" scores ~0.47 — almost identical to the ~0.48 a completely
+    unrelated title like "meet the fockers" scores against "the flash" purely
+    from sharing common short words. No single ratio cutoff separates those
+    two cases. Substring containment resolves the short-query case
+    deterministically instead of by approximate ratio.
+    """
+    if query == candidate:
+        return 2.0
+    if query in candidate or candidate in query:
+        return 1.0 + difflib.SequenceMatcher(None, query, candidate).ratio()
+    return difflib.SequenceMatcher(None, query, candidate).ratio()
+
+
+def _fuzzy_match_titles(query: str, candidates: list[str]) -> list[str]:
+    """Return up to _FUZZY_MATCH_LIMIT candidates, best match first."""
+    scored = [
+        (c, s) for c in candidates if (s := _title_match_score(query, c)) >= _FUZZY_MATCH_CUTOFF
+    ]
+    scored.sort(key=lambda pair: pair[1], reverse=True)
+    return [c for c, _ in scored[:_FUZZY_MATCH_LIMIT]]
 
 
 async def _resolve_user_id(
@@ -196,7 +224,7 @@ async def find_user_request(
 
     query = _YEAR_PATTERN.sub("", title_input).lower()
     candidates_map = {t.lower(): t for t in title_to_request}
-    matches = difflib.get_close_matches(query, candidates_map, n=3, cutoff=_FUZZY_MATCH_CUTOFF)
+    matches = _fuzzy_match_titles(query, list(candidates_map))
 
     if not matches:
         return UserRequestLookup(status="no_match")

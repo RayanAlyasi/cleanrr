@@ -10,7 +10,9 @@ from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._user_request import (
     _fetch_media_title,
+    _fuzzy_match_titles,
     _resolve_user_id,
+    _title_match_score,
     enrich_titles_with_names,
     find_user_request,
 )
@@ -275,6 +277,89 @@ async def test_find_user_request_multi_match(
         assert len(result.candidates) == 2
     finally:
         current_telegram_user_id.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _title_match_score / _fuzzy_match_titles
+#
+# Bug found live: asking about "the flash" (never requested) returned
+# completely unrelated titles ("Meet the Parents", "Meet the Fockers") as
+# candidates. Plain difflib.SequenceMatcher.ratio() scored those ~0.48 —
+# almost identical to the ~0.47 a *correct* short query like "dune" scores
+# against "dune part one" — so no single cutoff could separate the two.
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("query", "candidate"),
+    [
+        ("dune", "dune part one"),
+        ("dune", "dune part two"),
+        ("dune part 2", "dune part two"),
+        ("severance", "sevarance"),
+        ("the bear", "bear"),
+        ("project runwa", "project runway"),
+    ],
+)
+def test_title_match_score_accepts_real_matches(query: str, candidate: str) -> None:
+    assert _title_match_score(query, candidate) >= 0.6
+
+
+@pytest.mark.parametrize(
+    ("query", "candidate"),
+    [
+        ("the flash", "meet the fockers"),
+        ("the flash", "meet the parents"),
+        ("the flash", "greatest showman"),
+        ("severance", "the office"),
+    ],
+)
+def test_title_match_score_rejects_unrelated_titles(query: str, candidate: str) -> None:
+    assert _title_match_score(query, candidate) < 0.6
+
+
+def test_fuzzy_match_titles_excludes_unrelated_short_words() -> None:
+    candidates = ["meet the parents", "meet the fockers", "greatest showman"]
+    assert _fuzzy_match_titles("the flash", candidates) == []
+
+
+def test_fuzzy_match_titles_finds_short_partial_query() -> None:
+    candidates = ["dune part one", "dune part two", "severance"]
+    matches = _fuzzy_match_titles("dune", candidates)
+    assert set(matches) == {"dune part one", "dune part two"}
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_no_match_ignores_unrelated_titles(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """The exact live bug: a query for a title the user never requested must
+    not surface unrelated titles as candidates just because they share a
+    common short word."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "Meet the Parents", "status": 5}},
+            {"id": 2, "status": 2, "media": {"title": "Meet the Fockers", "status": 5}},
+        ]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "the flash")
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result.status == "no_match"
 
 
 @pytest.mark.asyncio
