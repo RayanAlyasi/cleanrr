@@ -75,7 +75,7 @@ def test_render_no_match_includes_title() -> None:
     assert result is not None
     assert result["is_error"] is False
     assert "My Movie" in result["content"][0]["text"]
-    assert "/list" in result["content"][0]["text"]
+    assert "list your requests" in result["content"][0]["text"]
 
 
 def test_render_no_match_truncates_long_title() -> None:

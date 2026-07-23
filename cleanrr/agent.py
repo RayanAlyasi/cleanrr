@@ -16,6 +16,7 @@ from claude_agent_sdk import (
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import (
+    WRITE_TOOLS,
     ConfirmationRegistry,
     build_confirmation_formatters,
     make_can_use_tool,
@@ -145,6 +146,7 @@ class Agent:
         self._client: ClaudeSDKClient | None = None
         self._stack: AsyncExitStack | None = None
         self._confirmation_registry: ConfirmationRegistry | None = None
+        self._overseerr_client: httpx.AsyncClient | None = None
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
         self._lock = asyncio.Lock()
@@ -152,6 +154,10 @@ class Agent:
     @property
     def confirmation_registry(self) -> ConfirmationRegistry | None:
         return self._confirmation_registry
+
+    @property
+    def overseerr_client(self) -> httpx.AsyncClient | None:
+        return self._overseerr_client
 
     async def start(self) -> None:
         if self._client is not None:
@@ -167,6 +173,7 @@ class Agent:
                     timeout=settings.overseerr_timeout_seconds,
                 )
             )
+        self._overseerr_client = overseerr_client
 
         sonarr_client: httpx.AsyncClient | None = None
         if settings.sonarr_url is not None and settings.sonarr_api_key is not None:
@@ -258,7 +265,10 @@ class Agent:
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
         self._options.mcp_servers = {"cleanrr": mcp}
-        self._options.allowed_tools = [t.name for t in tools]
+        # WRITE_TOOLS must NOT be pre-approved here: an allowed_tools entry
+        # auto-approves that tool and skips can_use_tool entirely, which would
+        # let destructive tools run with no confirmation prompt at all.
+        self._options.allowed_tools = [t.name for t in tools if t.name not in WRITE_TOOLS]
         self._options.tools = []
         self._options.strict_mcp_config = True
 
@@ -286,6 +296,7 @@ class Agent:
         if self._confirmation_registry is not None:
             await self._confirmation_registry.stop()
             self._confirmation_registry = None
+        self._overseerr_client = None
         await self._stack.aclose()
         self._stack = None
         self._client = None

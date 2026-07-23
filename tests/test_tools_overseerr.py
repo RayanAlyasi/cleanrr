@@ -460,6 +460,45 @@ async def test_list_my_requests_formatted_output(
         current_telegram_user_id.reset(token)
 
 
+@pytest.mark.asyncio
+async def test_list_my_requests_resolves_titles_from_real_overseerr_shape(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Real Overseerr requests carry only tmdbId, never a title/name — the tool
+    must resolve it via /movie or /tv before it can display anything useful."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"mediaType": "movie", "tmdbId": 194, "status": 5}},
+        ]
+    }
+
+    movie_detail_response = MagicMock()
+    movie_detail_response.status_code = 200
+    movie_detail_response.json.return_value = {"id": 194, "title": "Amélie"}
+
+    mock_client.get.side_effect = [user_response, requests_response, movie_detail_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is False
+    assert "Amélie" in result["content"][0]["text"]
+
+
 # ---------------------------------------------------------------------------
 # find_my_request integration tests
 # ---------------------------------------------------------------------------

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import AsyncIterator
-from typing import cast
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -24,7 +24,7 @@ def settings_with_overseerr() -> Settings:
     )
 
 
-def _collect_allowed_tools(settings: Settings) -> list[str]:
+def _collect_allowed_tools(settings: Settings, *, telegram_bot: Any = None) -> list[str]:
     """Return the allowed_tools list produced by Agent.start() for given settings."""
     captured: dict[str, object] = {}
 
@@ -39,12 +39,53 @@ def _collect_allowed_tools(settings: Settings) -> list[str]:
             return None
 
     async def _run() -> list[str]:
-        agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+        agent = Agent(
+            identity=MagicMock(spec=Identity),
+            settings=settings,
+            timeout_seconds=5.0,
+            telegram_bot=telegram_bot,
+        )
         with patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient):
             await agent.start()
             await agent.stop()
         opts = captured["options"]
         return list(opts.allowed_tools)  # type: ignore[union-attr]
+
+    return asyncio.run(_run())
+
+
+def _collect_registered_tool_names(settings: Settings, *, telegram_bot: Any = None) -> list[str]:
+    """Return names of tools registered with the MCP server (regardless of allowed_tools)."""
+    captured: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    def _fake_create_sdk_mcp_server(name: str, tools: list[object]) -> dict[str, object]:
+        captured["tools"] = tools
+        return {"type": "sdk", "name": name, "instance": MagicMock()}
+
+    async def _run() -> list[str]:
+        agent = Agent(
+            identity=MagicMock(spec=Identity),
+            settings=settings,
+            timeout_seconds=5.0,
+            telegram_bot=telegram_bot,
+        )
+        with (
+            patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient),
+            patch("cleanrr.agent.create_sdk_mcp_server", _fake_create_sdk_mcp_server),
+        ):
+            await agent.start()
+            await agent.stop()
+        return [t.name for t in captured["tools"]]  # type: ignore[union-attr]
 
     return asyncio.run(_run())
 
@@ -116,6 +157,7 @@ async def test_start_with_no_overseerr_config_registers_no_tools(
 
     opts = captured_options["options"]
     assert opts.allowed_tools == []  # type: ignore[union-attr]
+    assert agent.overseerr_client is None
 
     await agent.stop()
 
@@ -385,36 +427,29 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
     # can_use_tool replaces permission_mode in production wiring
     assert opts.can_use_tool is not None  # type: ignore[union-attr]
     assert opts.permission_mode is None  # type: ignore[union-attr]
-    # Write tool is registered alongside read tools
-    assert "remove_my_request" in opts.allowed_tools  # type: ignore[union-attr]
+    # Write tool must NOT be in allowed_tools — that would auto-approve it and
+    # skip can_use_tool entirely, running the destructive action unconfirmed.
+    assert "remove_my_request" not in opts.allowed_tools  # type: ignore[union-attr]
     assert agent.confirmation_registry is not None
+    assert agent.overseerr_client is not None
 
     await agent.stop()
-    # Registry stopped on stop()
+    # Registry and Overseerr client torn down on stop()
     assert agent.confirmation_registry is None
+    assert agent.overseerr_client is None
 
 
-@pytest.mark.asyncio
-async def test_start_registers_all_write_tools_when_all_services_configured(
-    monkeypatch: pytest.MonkeyPatch,
+def test_start_registers_write_tool_without_auto_approving_it(
+    settings_with_overseerr: Settings,
 ) -> None:
-    """All 4 destructive tools must register when their respective services + telegram_bot exist."""
-    from cleanrr import agent as agent_module
+    """remove_my_request must be available to Claude but gated behind can_use_tool."""
+    registered = _collect_registered_tool_names(settings_with_overseerr, telegram_bot=MagicMock())
+    assert "remove_my_request" in registered
 
-    captured_options: dict[str, object] = {}
 
-    class _FakeSDKClient:
-        def __init__(self, options: object) -> None:
-            captured_options["options"] = options
-
-        async def __aenter__(self) -> _FakeSDKClient:
-            return self
-
-        async def __aexit__(self, *a: object) -> None:
-            return None
-
-    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
-
+def test_start_registers_all_write_tools_when_all_services_configured() -> None:
+    """All 4 destructive tools must register (but never auto-approve) when their
+    respective services + telegram_bot exist."""
     settings = Settings(
         telegram_bot_token=SecretStr("test"),
         anthropic_api_key=SecretStr("sk-test"),
@@ -428,24 +463,18 @@ async def test_start_registers_all_write_tools_when_all_services_configured(
         qbittorrent_username="admin",
         qbittorrent_password=SecretStr("pass"),
     )
-    agent = Agent(
-        identity=MagicMock(spec=Identity),
-        settings=settings,
-        timeout_seconds=5.0,
-        telegram_bot=MagicMock(),
-    )
-    await agent.start()
-
-    opts = captured_options["options"]
-    allowed = set(opts.allowed_tools)  # type: ignore[union-attr]
-    assert {
+    write_tools = {
         "remove_my_request",
         "delete_torrent",
         "force_research_movie",
         "force_research_show",
-    }.issubset(allowed), f"missing write tools: {allowed}"
+    }
 
-    await agent.stop()
+    registered = set(_collect_registered_tool_names(settings, telegram_bot=MagicMock()))
+    assert write_tools.issubset(registered), f"missing write tools: {registered}"
+
+    allowed = set(_collect_allowed_tools(settings, telegram_bot=MagicMock()))
+    assert not write_tools & allowed, f"write tools wrongly auto-approved: {write_tools & allowed}"
 
 
 @pytest.mark.asyncio

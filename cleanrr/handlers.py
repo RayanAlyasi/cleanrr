@@ -1,7 +1,9 @@
 import logging
 import time
+from typing import Any
 
-from telegram import Update
+from telegram import CallbackQuery, Update
+from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 import cleanrr.metrics as metrics
@@ -9,6 +11,7 @@ from cleanrr.agent import Agent
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import CALLBACK_PREFIX
+from cleanrr.tools._user_request import _resolve_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -106,13 +109,54 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Usage: /invite <overseerr_username>")
         return
 
+    agent: Agent = context.application.bot_data[AGENT_KEY]
+    overseerr_client = agent.overseerr_client
+    if (
+        settings.overseerr_url is None
+        or settings.overseerr_api_key is None
+        or overseerr_client is None
+    ):
+        await update.message.reply_text(
+            "Overseerr isn't configured yet — ask the admin to set "
+            "OVERSEERR_URL and OVERSEERR_API_KEY."
+        )
+        return
+
     overseerr_username = args[0].lstrip("@")
+    base_url = str(settings.overseerr_url).rstrip("/")
+    _user_id, resolve_status = await _resolve_user_id(
+        overseerr_client, base_url, overseerr_username
+    )
+    if resolve_status == "user_not_found":
+        await update.message.reply_text(
+            f"Couldn't find an Overseerr user named '{overseerr_username}' — "
+            "check the username and try again."
+        )
+        return
+    if resolve_status == "http_error":
+        await update.message.reply_text(
+            "Couldn't reach Overseerr to verify that user — try again in a moment."
+        )
+        return
+    if resolve_status == "parse_error":
+        await update.message.reply_text("Unexpected response from Overseerr — try again later.")
+        return
+
     identity: Identity = context.application.bot_data[IDENTITY_KEY]
     code = await identity.issue_code(overseerr_username)
     await update.message.reply_text(
         f"Link code for @{overseerr_username}: {code}\n"
         f"Expires in {settings.link_code_ttl_hours}h. Share it; they DM me /link {code}."
     )
+
+
+async def _safe_answer(query: CallbackQuery, *args: Any, **kwargs: Any) -> None:
+    """answerCallbackQuery fails if the query is stale (Telegram invalidates
+    it after a short window) — that's a routine race, not a bug to crash on."""
+    try:
+        await query.answer(*args, **kwargs)
+    except TelegramError:
+        logger.warning("failed to answer callback query", exc_info=True)
 
 
 async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -123,23 +167,23 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     parts = query.data.split(":")
     if len(parts) != 4 or f"{parts[0]}:{parts[1]}:" != CALLBACK_PREFIX:
         logger.warning("malformed confirmation callback_data")
-        await query.answer()
+        await _safe_answer(query)
         return
     confirmation_id, decision = parts[2], parts[3]
     if decision not in ("yes", "no"):
         logger.warning("confirmation callback with unknown decision: %s", decision)
-        await query.answer()
+        await _safe_answer(query)
         return
 
     agent: Agent = context.application.bot_data[AGENT_KEY]
     registry = agent.confirmation_registry
     if registry is None:
-        await query.answer()
+        await _safe_answer(query)
         return
 
     pending = await registry.get(confirmation_id)
     if pending is None:
-        await query.answer()
+        await _safe_answer(query)
         try:
             await query.edit_message_text("This confirmation has expired.")
         except Exception:
@@ -149,10 +193,10 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # answerCallbackQuery only accepts ONE response per query; calling it
     # unconditionally up front would silently swallow this alert.
     if update.effective_user.id != pending.telegram_user_id:
-        await query.answer("This confirmation isn't for you.", show_alert=True)
+        await _safe_answer(query, "This confirmation isn't for you.", show_alert=True)
         return
 
-    await query.answer()
+    await _safe_answer(query)
     await registry.resolve(
         confirmation_id,
         telegram_user_id=update.effective_user.id,

@@ -30,6 +30,7 @@ def _make_settings(
     admin_ids: set[int] | None = None,
     metrics_enabled: bool = False,
     metrics_port: int = 9100,
+    overseerr_configured: bool = False,
 ) -> Settings:
     kwargs: dict[str, object] = {
         "_env_file": None,
@@ -42,6 +43,9 @@ def _make_settings(
     }
     if admin_ids is not None:
         kwargs["admin_telegram_ids"] = admin_ids
+    if overseerr_configured:
+        kwargs["overseerr_url"] = "http://overseerr:5055"
+        kwargs["overseerr_api_key"] = "ov-key"
     return Settings(**kwargs)  # type: ignore[arg-type]
 
 
@@ -280,22 +284,8 @@ async def test_cmd_invite_rejects_too_many_args() -> None:
 
 
 @pytest.mark.asyncio
-async def test_cmd_invite_strips_leading_at_sign() -> None:
-    settings = _make_settings(admin_ids={1})
-    identity = MagicMock()
-    identity.issue_code = AsyncMock(return_value="ABC123")
-    update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings, identity=identity)
-    context.args = ["@bob"]
-
-    await cmd_invite(update, context)
-
-    identity.issue_code.assert_awaited_once_with("bob")
-
-
-@pytest.mark.asyncio
-async def test_cmd_invite_happy_path() -> None:
-    settings = _make_settings(admin_ids={1})
+async def test_cmd_invite_rejects_when_overseerr_not_configured() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=False)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
     update = _make_update("", user_id=1)
@@ -303,6 +293,102 @@ async def test_cmd_invite_happy_path() -> None:
     context.args = ["alice"]
 
     await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "configured" in reply.lower()
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cmd_invite_rejects_unknown_overseerr_user() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["nosuchuser"]
+
+    with patch(
+        "cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "user_not_found"))
+    ):
+        await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "Couldn't find" in reply
+    assert "nosuchuser" in reply
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cmd_invite_reports_overseerr_unreachable() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["alice"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "http_error"))):
+        await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "reach Overseerr" in reply
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cmd_invite_reports_overseerr_parse_error() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["alice"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "parse_error"))):
+        await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "Unexpected response" in reply
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cmd_invite_strips_leading_at_sign() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["@bob"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
+        await cmd_invite(update, context)
+
+    identity.issue_code.assert_awaited_once_with("bob")
+
+
+@pytest.mark.asyncio
+async def test_cmd_invite_happy_path() -> None:
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    agent = MagicMock()
+    agent.overseerr_client = MagicMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(agent, settings, identity=identity)
+    context.args = ["alice"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
+        await cmd_invite(update, context)
 
     identity.issue_code.assert_awaited_once_with("alice")
     reply = update.message.reply_text.await_args.args[0]
@@ -456,12 +542,14 @@ async def test_on_startup_starts_agent_and_identity() -> None:
 
     app = MagicMock()
     app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot.set_my_commands = AsyncMock()
 
     with patch("cleanrr.bot.metrics.start") as mock_metrics_start:
         await _on_startup(app)
 
     agent.start.assert_awaited_once()
     identity.start.assert_awaited_once()
+    app.bot.set_my_commands.assert_awaited_once()
     mock_metrics_start.assert_not_called()
 
 
@@ -476,6 +564,7 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
 
     app = MagicMock()
     app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot.set_my_commands = AsyncMock()
 
     with (
         patch("cleanrr.bot.metrics.start") as mock_metrics_start,
@@ -524,6 +613,36 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
     await on_confirmation(update, context)
 
     answer.assert_awaited()
+    assert pending.future.result() is True
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_survives_stale_callback_query() -> None:
+    """A stale/expired callback query must not crash the handler or skip
+    resolving the confirmation — this is what happened live when Telegram
+    invalidated a button tap queued behind a still-in-flight message."""
+    from telegram.error import BadRequest
+
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    agent = MagicMock()
+    agent.confirmation_registry = registry
+    context = _make_context(agent, _make_settings())
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    answer.side_effect = BadRequest("Query is too old and response timeout expired")
+
+    await on_confirmation(update, context)  # must not raise
+
     assert pending.future.result() is True
 
 
@@ -603,3 +722,6 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
 
     registered = [handler.callback for handler in app.handlers[0]]
     assert registered == [cmd_start, cmd_help, cmd_invite, cmd_link, on_confirmation, on_message]
+    # Must be enabled — a confirmation button tap has to reach on_confirmation
+    # while the message that triggered it is still blocked awaiting that tap.
+    assert app.concurrent_updates

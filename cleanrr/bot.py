@@ -2,7 +2,7 @@ import logging
 import re
 from datetime import timedelta
 
-from telegram import Update
+from telegram import BotCommand, Update
 from telegram.ext import (
     Application,
     CallbackQueryHandler,
@@ -30,11 +30,21 @@ from cleanrr.permissions import CALLBACK_PREFIX
 
 logger = logging.getLogger(__name__)
 
+# Registered with Telegram via set_my_commands so the "/" autocomplete menu
+# lists them; must stay in sync with the CommandHandler registrations below.
+BOT_COMMANDS = [
+    BotCommand("start", "Sanity check; bot confirms it's online"),
+    BotCommand("help", "List the commands available"),
+    BotCommand("link", "Bind your Telegram account to an Overseerr user"),
+    BotCommand("invite", "Admin only — issue a link code for a friend"),
+]
+
 
 async def _on_startup(app: Application) -> None:
     await app.bot_data[AGENT_KEY].start()
     identity: Identity = app.bot_data[IDENTITY_KEY]
     await identity.start()
+    await app.bot.set_my_commands(BOT_COMMANDS)
     settings: Settings = app.bot_data[SETTINGS_KEY]
     if settings.metrics_enabled:
         metrics.start(settings.metrics_port, str(settings.metrics_bind_address))
@@ -65,6 +75,15 @@ def build_application(settings: Settings) -> Application:
         .token(settings.telegram_bot_token.get_secret_value())
         .post_init(_on_startup)
         .post_shutdown(_on_shutdown)
+        # Without this, PTB processes updates one at a time. A confirmation
+        # button tap is a separate update from the message that triggered it,
+        # and can_use_tool blocks the triggering update's own handler while it
+        # awaits that tap — so the tap could never be dispatched until the
+        # confirmation timed out on its own, by which point Telegram had
+        # already invalidated the callback query. cleanrr's own concurrency
+        # limit (Agent._lock, one Claude subprocess at a time) is unaffected —
+        # this only lets otherwise-independent updates interleave.
+        .concurrent_updates(True)
         .build()
     )
     app.bot_data[SETTINGS_KEY] = settings
