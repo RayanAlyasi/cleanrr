@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -384,6 +385,64 @@ async def test_find_user_request_multi_match_sends_photos_when_telegram_bot_give
         current_telegram_user_id.reset(token)
 
 
+@pytest.mark.asyncio
+async def test_find_user_request_multi_match_photo_captions_include_real_year(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """End-to-end regression: Overseerr's request-list media objects carry
+    only tmdbId, not a title/poster/year — those are all resolved via
+    enrich_titles_with_names's per-item detail fetch, using releaseDate
+    (movies) since there is no "releaseYear" field. Proves the caption
+    actually gets a real year, not just that the field name exists."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"mediaType": "movie", "tmdbId": 438631, "status": 5}},
+            {"id": 2, "status": 2, "media": {"mediaType": "movie", "tmdbId": 693134, "status": 3}},
+        ]
+    }
+
+    detail_one = MagicMock()
+    detail_one.status_code = 200
+    detail_one.json.return_value = {
+        "id": 438631,
+        "title": "Dune",
+        "posterPath": "/a.jpg",
+        "releaseDate": "2021-09-15",
+    }
+    detail_two = MagicMock()
+    detail_two.status_code = 200
+    detail_two.json.return_value = {
+        "id": 693134,
+        "title": "Dune: Part Two",
+        "posterPath": "/b.jpg",
+        "releaseDate": "2024-02-27",
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp, detail_one, detail_two]
+    mock_bot = MagicMock()
+    mock_bot.send_photo = AsyncMock()
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(
+            mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot
+        )
+        assert result.status == "multi_match"
+        captions = [c.kwargs["caption"] for c in mock_bot.send_photo.await_args_list]
+        assert "1. Dune (2021)" in captions
+        assert "2. Dune: Part Two (2024)" in captions
+    finally:
+        current_telegram_user_id.reset(token)
+
+
 # ---------------------------------------------------------------------------
 # _send_match_photos
 # ---------------------------------------------------------------------------
@@ -433,6 +492,31 @@ async def test_send_match_photos_tolerates_one_failure() -> None:
 
     assert sent == 1
     assert bot.send_photo.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_send_match_photos_bounded_by_timeout_per_candidate(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: tool calls run as detached tasks the SDK doesn't cancel
+    when Agent.respond()'s outer timeout fires, so a hung send_photo call
+    must be bounded on its own rather than relying on the caller's timeout."""
+    import cleanrr.tools._user_request as user_request_module
+
+    monkeypatch.setattr(user_request_module, "_PHOTO_SEND_TIMEOUT_SECONDS", 0.05)
+
+    async def _hangs_forever(**_kwargs: object) -> None:
+        await asyncio.sleep(999)
+
+    bot = MagicMock()
+    bot.send_photo = _hangs_forever
+    candidates: list[dict[str, object]] = [
+        {"media": {"title": "Slow Poster", "posterPath": "/a.jpg"}}
+    ]
+
+    sent = await asyncio.wait_for(_send_match_photos(bot, 42, candidates), timeout=5.0)
+
+    assert sent == 0
 
 
 # ---------------------------------------------------------------------------
@@ -765,6 +849,50 @@ async def test_fetch_media_details_returns_title_and_poster(mock_client: AsyncMo
 
 
 @pytest.mark.asyncio
+async def test_fetch_media_details_movie_year_from_release_date(mock_client: AsyncMock) -> None:
+    """Regression: Overseerr has no "releaseYear" field on movie responses —
+    only "releaseDate" (a full ISO date string). Confirmed against a live
+    instance. Year must be derived, not read directly."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 438631, "title": "Dune", "releaseDate": "2021-09-15"}
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 438631)
+
+    assert details is not None
+    assert details.year == 2021
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_tv_year_from_first_air_date(mock_client: AsyncMock) -> None:
+    """Regression: TV responses key their date "firstAirDate", not
+    "releaseDate" and definitely not "releaseYear"."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 136315, "name": "The Bear", "firstAirDate": "2022-06-23"}
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "tv", 136315)
+
+    assert details is not None
+    assert details.year == 2022
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_missing_date_year_is_none(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 194, "title": "Amélie"}
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert details is not None
+    assert details.year is None
+
+
+@pytest.mark.asyncio
 async def test_fetch_media_details_missing_poster_path_is_none(mock_client: AsyncMock) -> None:
     resp = MagicMock()
     resp.status_code = 200
@@ -787,13 +915,18 @@ async def test_fetch_media_details_returns_none_on_http_error(mock_client: Async
 
 
 @pytest.mark.asyncio
-async def test_enrich_titles_fills_poster_path(mock_client: AsyncMock) -> None:
+async def test_enrich_titles_fills_poster_path_and_release_year(mock_client: AsyncMock) -> None:
     requests_list: list[dict[str, object]] = [
         {"id": 1, "media": {"mediaType": "movie", "tmdbId": 194}}
     ]
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"id": 194, "title": "Amélie", "posterPath": "/abc123.jpg"}
+    resp.json.return_value = {
+        "id": 194,
+        "title": "Amélie",
+        "posterPath": "/abc123.jpg",
+        "releaseDate": "2001-04-25",
+    }
     mock_client.get.return_value = resp
 
     await enrich_titles_with_names(mock_client, "http://overseerr:5055", requests_list)
@@ -802,6 +935,7 @@ async def test_enrich_titles_fills_poster_path(mock_client: AsyncMock) -> None:
     assert isinstance(media, dict)
     assert media["title"] == "Amélie"
     assert media["posterPath"] == "/abc123.jpg"
+    assert media["releaseYear"] == 2001
 
 
 @pytest.mark.asyncio

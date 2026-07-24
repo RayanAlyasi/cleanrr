@@ -30,24 +30,44 @@ _TITLE_FETCH_CONCURRENCY = 8
 # TMDB's public image CDN — Overseerr's posterPath is always a TMDB-relative
 # path (confirmed against a live instance), not a full URL.
 _TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
+# Tool calls run as detached tasks the SDK doesn't cancel when the outer
+# Agent.respond() timeout fires (they aren't awaited inline by
+# receive_response()), so an unbounded send_photo call here wouldn't be cut
+# off by claude_timeout_seconds — it would just keep running against the
+# shared subprocess after the caller has already timed out. Bound each send
+# individually, same pattern as _FORMATTER_TIMEOUT_SECONDS.
+_PHOTO_SEND_TIMEOUT_SECONDS = 5.0
 
 
 @dataclass(frozen=True)
 class MediaDetails:
     title: str | None
     poster_path: str | None
+    year: int | None
+
+
+def _parse_year(date_str: object) -> int | None:
+    if not isinstance(date_str, str) or len(date_str) < 4:
+        return None
+    try:
+        return int(date_str[:4])
+    except ValueError:
+        return None
 
 
 async def _fetch_media_details(
     client: httpx.AsyncClient, base_url: str, media_type: str, tmdb_id: int
 ) -> MediaDetails | None:
-    """Look up a movie/show's display name and poster.
+    """Look up a movie/show's display name, poster, and release year.
 
     Overseerr's request-list endpoints return only tmdbId/tvdbId — title,
-    name, and posterPath come solely from the per-item /movie or /tv detail
-    endpoint (movies key it "title", TV shows key it "name"). posterPath is
-    a TMDB-relative path (e.g. "/gDzOcq0...jpg"); the caller builds a full
-    URL via _TMDB_IMAGE_BASE. Confirmed against a live instance.
+    name, posterPath, and release date all come solely from the per-item
+    /movie or /tv detail endpoint. Movies key title "title" and date
+    "releaseDate"; TV shows key title "name" and date "firstAirDate" — there
+    is no "releaseYear" field anywhere in Overseerr's schema, confirmed
+    against a live instance and its OpenAPI spec. posterPath is a
+    TMDB-relative path (e.g. "/gDzOcq0...jpg"); the caller builds a full URL
+    via _TMDB_IMAGE_BASE.
     """
     endpoint = "movie" if media_type == "movie" else "tv"
     try:
@@ -64,9 +84,11 @@ async def _fetch_media_details(
         return None
     title = data.get("title") or data.get("name")
     poster_path = data.get("posterPath")
+    date_str = data.get("releaseDate") if media_type == "movie" else data.get("firstAirDate")
     return MediaDetails(
         title=str(title) if title else None,
         poster_path=poster_path if isinstance(poster_path, str) and poster_path else None,
+        year=_parse_year(date_str),
     )
 
 
@@ -80,8 +102,10 @@ async def _fetch_media_title(
 async def enrich_titles_with_names(
     client: httpx.AsyncClient, base_url: str, requests_list: list[Any]
 ) -> None:
-    """Fill in each request's media title/name (and posterPath, if any) in
-    place, fetched concurrently.
+    """Fill in each request's media title/name, posterPath, and releaseYear
+    in place, fetched concurrently. releaseYear doesn't exist on Overseerr's
+    media objects — it's synthesized here from releaseDate/firstAirDate so
+    every caller displaying a year can keep reading media["releaseYear"].
 
     No-op for entries that aren't dicts, lack a usable mediaType/tmdbId, or
     fail to resolve — callers already fall back to "Unknown" for those.
@@ -104,6 +128,8 @@ async def enrich_titles_with_names(
             media["title" if media_type == "movie" else "name"] = details.title
         if details.poster_path:
             media["posterPath"] = details.poster_path
+        if details.year:
+            media["releaseYear"] = details.year
 
     await asyncio.gather(*(_fill(req) for req in requests_list if isinstance(req, dict)))
 
@@ -153,10 +179,15 @@ async def _send_match_photos(
         year = media.get("releaseYear")
         caption = f"{i}. {title} ({year})" if year else f"{i}. {title}"
         try:
-            await telegram_bot.send_photo(
-                chat_id=chat_id, photo=f"{_TMDB_IMAGE_BASE}{poster_path}", caption=caption
+            await asyncio.wait_for(
+                telegram_bot.send_photo(
+                    chat_id=chat_id, photo=f"{_TMDB_IMAGE_BASE}{poster_path}", caption=caption
+                ),
+                timeout=_PHOTO_SEND_TIMEOUT_SECONDS,
             )
             sent += 1
+        except TimeoutError:
+            logger.warning("timed out sending match poster for %r", title)
         except TelegramError:
             logger.warning("failed to send match poster for %r", title, exc_info=True)
     return sent
