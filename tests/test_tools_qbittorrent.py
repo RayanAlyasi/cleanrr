@@ -406,6 +406,38 @@ async def test_success_filters_to_stalled_states(
 
 
 @pytest.mark.asyncio
+async def test_success_flags_error_and_missing_files_states(
+    mock_qbit_client: AsyncMock, settings: Settings
+) -> None:
+    """error/missingFiles are qBittorrent's genuinely-stuck states (disk
+    write failure, files deleted externally) — the tool built to answer
+    "what's stuck?" must surface them, not just the no-peers states."""
+    mock_qbit_client.post.return_value = _make_login_ok()
+    torrent_resp = MagicMock()
+    torrent_resp.status_code = 200
+    torrent_resp.json.return_value = [
+        _make_torrent(name="Broken One", state="error"),
+        _make_torrent(name="Missing Files One", state="missingFiles"),
+        _make_torrent(name="Active One", state="downloading"),
+    ]
+    mock_qbit_client.get.return_value = torrent_resp
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        text = result["content"][0]["text"]
+        assert result["is_error"] is False
+        assert "Broken One" in text
+        assert "Missing Files One" in text
+        assert "Active One" not in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_success_caps_at_10_entries(mock_qbit_client: AsyncMock, settings: Settings) -> None:
     mock_qbit_client.post.return_value = _make_login_ok()
     torrents = [_make_torrent(name=f"Torrent {i}", state="stalledDL") for i in range(15)]
@@ -613,6 +645,32 @@ async def test_parse_error_on_retry_after_reauth(
         result = await tool.handler({})
         assert result["is_error"] is True
         assert "Unexpected response" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_still_403_after_reauth_reports_auth_failure_not_empty(
+    mock_qbit_client: AsyncMock, settings: Settings
+) -> None:
+    """Regression: if the retry after re-login ALSO 403s, that's a real,
+    persistent auth failure — must not be reported as "no stalled torrents"."""
+    first_torrent_resp = MagicMock()
+    first_torrent_resp.status_code = 403
+    second_torrent_resp = MagicMock()
+    second_torrent_resp.status_code = 403
+
+    mock_qbit_client.post.return_value = _make_login_ok()
+    mock_qbit_client.get.side_effect = [first_torrent_resp, second_torrent_resp]
+
+    tools = build_tools(mock_qbit_client, settings)
+    tool = tools[0]
+
+    token = current_telegram_user_id.set(42)
+    try:
+        result = await tool.handler({})
+        assert result["is_error"] is True
+        assert "auth failed" in result["content"][0]["text"]
     finally:
         current_telegram_user_id.reset(token)
 

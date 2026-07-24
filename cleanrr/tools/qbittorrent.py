@@ -15,7 +15,10 @@ from cleanrr.tools._results import text_result
 
 logger = logging.getLogger(__name__)
 
-_STALLED_STATES = frozenset({"stalledDL", "metaDL"})
+# error/missingFiles are qBittorrent's genuinely-stuck states (disk write
+# failure, files deleted externally) — not just "no peers right now" like
+# stalledDL/metaDL, but the ones most needing admin attention.
+_STALLED_STATES = frozenset({"stalledDL", "metaDL", "error", "missingFiles"})
 
 
 def _format_age(ts: int) -> str:
@@ -108,7 +111,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 )
 
             try:
-                torrents, _ = await fetch_torrents(qbit_client, base_url)
+                torrents, still_needs_reauth = await fetch_torrents(qbit_client, base_url)
             except httpx.HTTPError:
                 logger.exception("qBittorrent HTTP error on retry")
                 metrics.tool_calls_total.labels(
@@ -123,6 +126,19 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 ).inc()
                 return text_result(
                     "Unexpected response from qBittorrent — try again later.", is_error=True
+                )
+            # A second 403 right after a successful re-login means the
+            # session isn't sticking (cookie not being sent/accepted) — that's
+            # a real failure, not "no torrents": don't report a false "clean".
+            if still_needs_reauth:
+                logger.error("qBittorrent still returning 403 after re-login")
+                metrics.tool_calls_total.labels(
+                    tool="list_stalled_torrents", status="auth_failed"
+                ).inc()
+                return text_result(
+                    "qBittorrent auth failed — check QBITTORRENT_USERNAME"
+                    " and QBITTORRENT_PASSWORD.",
+                    is_error=True,
                 )
 
         stalled = [t for t in torrents if t.get("state") in _STALLED_STATES][:10]
