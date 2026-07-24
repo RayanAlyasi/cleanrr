@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
@@ -10,6 +12,9 @@ from cleanrr.identity import Identity
 from cleanrr.tools._results import text_result
 from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
+if TYPE_CHECKING:
+    import telegram
+
 logger = logging.getLogger(__name__)
 
 
@@ -18,6 +23,7 @@ def build_tools(
     overseerr_client: httpx.AsyncClient,
     identity: Identity,
     settings: Settings,
+    telegram_bot: telegram.Bot | None = None,
 ) -> list[SdkMcpTool]:
     """Factory for Sonarr tools."""
 
@@ -40,7 +46,9 @@ def build_tools(
                 is_error=True,
             )
 
-        lookup = await find_user_request(overseerr_client, identity, settings, title_input)
+        lookup = await find_user_request(
+            overseerr_client, identity, settings, title_input, telegram_bot=telegram_bot
+        )
 
         error_response = render_lookup_error(lookup, title_input)
         if error_response is not None:
@@ -117,12 +125,15 @@ def build_tools(
             total = stats.get("episodeCount", 0)
             have = stats.get("episodeFileCount", 0)
 
-            # Fetch queue — don't fail the tool if this errors
+            # Don't fail the tool if this errors — episode counts alone are still useful.
             queue_records = []
             try:
                 queue_resp = await sonarr_client.get(
                     f"{base_url}/api/v3/queue",
-                    params={"seriesId": series_id, "pageSize": 50},
+                    # Sonarr's queue endpoint filters on seriesIds (plural, array-
+                    # bound) — seriesId is silently ignored and returns the whole
+                    # instance's queue instead of just this show's.
+                    params={"seriesIds": [series_id], "pageSize": 50},
                 )
                 if queue_resp.status_code == 200:
                     try:

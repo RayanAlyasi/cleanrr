@@ -584,6 +584,11 @@ async def test_get_movie_status_downloading(
         result = await get_movie_status.handler({"title": "The Batman"})
         assert "The Batman (2022): downloading." in result["content"][0]["text"]
         assert result["is_error"] is False
+
+        # Regression: Radarr's queue endpoint only filters on the plural,
+        # array-bound "movieIds" — "movieId" is silently ignored server-side.
+        queue_call = mock_radarr_client.get.call_args_list[1]
+        assert queue_call.kwargs["params"]["movieIds"] == [42]
     finally:
         current_telegram_user_id.reset(token)
 

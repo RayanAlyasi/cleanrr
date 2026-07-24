@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
@@ -15,6 +15,9 @@ from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
+if TYPE_CHECKING:
+    import telegram
+
 logger = logging.getLogger(__name__)
 
 
@@ -23,6 +26,7 @@ def build_tools(
     overseerr_client: httpx.AsyncClient,
     identity: Identity,
     settings: Settings,
+    telegram_bot: telegram.Bot | None = None,
 ) -> list[SdkMcpTool]:
     """Factory for destructive Sonarr tools.
 
@@ -34,8 +38,10 @@ def build_tools(
     @tool(
         "force_research_show",
         "Re-trigger a Sonarr search for one of the user's own requested TV shows "
-        "at the series level (searches all monitored episodes). Idempotent. The "
-        "user confirms in chat first. Pass the title as the user said it.",
+        "at the series level (searches all monitored episodes). Kicks off another "
+        "search — if Sonarr finds matching releases it may grab them immediately, "
+        "even if something's already downloading, so this is not a no-op. The user "
+        "confirms in chat first. Pass the title as the user said it.",
         {"title": str},
     )
     async def force_research_show(args: dict[str, Any]) -> dict[str, Any]:
@@ -50,7 +56,9 @@ def build_tools(
                 is_error=True,
             )
 
-        lookup = await find_user_request(overseerr_client, identity, settings, title_input)
+        lookup = await find_user_request(
+            overseerr_client, identity, settings, title_input, telegram_bot=telegram_bot
+        )
         error_response = render_lookup_error(lookup, title_input)
         if error_response is not None:
             metrics.tool_calls_total.labels(tool="force_research_show", status=lookup.status).inc()

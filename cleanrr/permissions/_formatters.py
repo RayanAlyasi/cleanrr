@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 
 from cleanrr.config import Settings
+from cleanrr.tools._qbittorrent_auth import normalize_torrent_hash
 from cleanrr.tools._user_request import _fetch_media_title
 
 _FORMATTER_TIMEOUT_SECONDS = 1.5
@@ -73,6 +74,8 @@ _OVERSEERR_REQUEST_STATUS_LABELS = {
     1: "pending",
     2: "approved",
     3: "declined",
+    4: "failed",
+    5: "completed",
 }
 
 
@@ -100,23 +103,14 @@ def _build_delete_torrent_formatter(
 
     async def formatter(tool_args: dict[str, Any]) -> str:
         raw = tool_args.get("torrent_hash")
-        # Mirror the tool's own normalization (strip + lower) BEFORE validating,
-        # so the prompt's "invalid" verdict matches what the tool will actually do.
-        # Otherwise a hash with stray whitespace renders as "invalid" but then
-        # passes the tool's check, and the confirmation prompt becomes a lie.
-        torrent_hash = raw.strip() if isinstance(raw, str) else raw
-        if (
-            not isinstance(torrent_hash, str)
-            or len(torrent_hash) != 40
-            or not all(c in "0123456789abcdefABCDEF" for c in torrent_hash)
-        ):
+        # Shares the tool's own normalize_torrent_hash so the prompt's
+        # "invalid" verdict can never drift from what the tool will actually do.
+        normalized = normalize_torrent_hash(raw)
+        if normalized is None:
             shown = (
-                torrent_hash[:40] + "..."
-                if isinstance(torrent_hash, str) and torrent_hash
-                else "<missing>"
+                raw.strip()[:40] + "..." if isinstance(raw, str) and raw.strip() else "<missing>"
             )
             return f"Delete torrent (invalid hash: {shown}) AND its files? Tool will refuse."
-        normalized = torrent_hash.lower()
         fallback = f"Delete torrent {normalized} AND its files from disk? This cannot be undone."
         if qbit_client is None or settings.qbittorrent_url is None:
             return fallback

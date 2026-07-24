@@ -118,6 +118,9 @@ async def test_resolve_user_id_malformed_json(mock_client: AsyncMock) -> None:
         (2, 2, "approved, pending download"),
         (3, 5, "declined, available"),
         (None, 3, "processing"),
+        (4, None, "failed"),
+        (5, None, "completed"),
+        (2, 6, "approved, deleted"),
     ],
 )
 def test_format_status_label_combinations(

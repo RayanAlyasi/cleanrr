@@ -3,8 +3,14 @@ from __future__ import annotations
 from cleanrr.tools._user_request import UserRequestLookup, render_lookup_error
 
 
-def _lookup(status: str, candidates: list | None = None) -> UserRequestLookup:
-    return UserRequestLookup(status=status, candidates=candidates)  # type: ignore[arg-type]
+def _lookup(
+    status: str, candidates: list | None = None, posters_sent: bool = False
+) -> UserRequestLookup:
+    return UserRequestLookup(
+        status=status,  # type: ignore[arg-type]
+        candidates=candidates,
+        posters_sent=posters_sent,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -106,7 +112,7 @@ def test_render_multi_match_candidate_without_year() -> None:
     result = render_lookup_error(_lookup("multi_match", candidates=candidates), "Dune")
     assert result is not None
     text = result["content"][0]["text"]
-    assert "- Dune\n" in text or text.endswith("- Dune")
+    assert "1. Dune\n" in text or text.endswith("1. Dune")
 
 
 def test_render_multi_match_candidate_uses_name_fallback() -> None:
@@ -121,6 +127,24 @@ def test_render_multi_match_none_candidates_returns_error() -> None:
     assert result is not None
     assert result["is_error"] is True
     assert "error occurred" in result["content"][0]["text"]
+
+
+def test_render_multi_match_mentions_photos_when_sent() -> None:
+    candidates = [{"media": {"title": "Dune Part One", "releaseYear": 2021}}]
+    result = render_lookup_error(
+        _lookup("multi_match", candidates=candidates, posters_sent=True), "Dune"
+    )
+    assert result is not None
+    assert "Sent poster photos" in result["content"][0]["text"]
+
+
+def test_render_multi_match_no_photo_mention_when_not_sent() -> None:
+    candidates = [{"media": {"title": "Dune Part One", "releaseYear": 2021}}]
+    result = render_lookup_error(
+        _lookup("multi_match", candidates=candidates, posters_sent=False), "Dune"
+    )
+    assert result is not None
+    assert "Sent poster photos" not in result["content"][0]["text"]
 
 
 def test_render_unknown_status_returns_none() -> None:

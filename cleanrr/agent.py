@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     TextBlock,
     create_sdk_mcp_server,
 )
@@ -33,6 +35,8 @@ from cleanrr.tools.sonarr_write import build_tools as build_sonarr_write_tools
 
 if TYPE_CHECKING:
     import telegram
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -59,13 +63,16 @@ you can't take.
   for everything ("what did I request?", "show me my requests").
 - `find_my_request` — look up ONE specific title. Use when they ask about a single
   movie/show ("is Dune ready?", "what's the status of Severance?"). Pass the title
-  exactly as the user wrote it.
+  exactly as the user wrote it — UNLESS they're replying to a numbered list of
+  matches a tool just showed them (with poster photos), in which case pass the
+  exact title of the one they picked, not their raw reply ("2" or "the second
+  one" → that candidate's actual title).
 - `get_show_status` — look up TV show download status in Sonarr (episodes ready,
   downloading). Use when they ask about show progress ("is The Bear downloading?",
-  "how many episodes are ready?").
+  "how many episodes are ready?"). Same numbered-list rule as `find_my_request`.
 - `get_movie_status` — look up movie download status in Radarr (downloaded vs downloading
   vs nothing yet). Use when they ask about a specific film ("is Dune ready?", "where's
-  my Batman movie?").
+  my Batman movie?"). Same numbered-list rule as `find_my_request`.
 - `list_stalled_torrents` — admin-only diagnostic that lists torrents stuck in qBittorrent
   with no peers/progress. Use when the admin asks "what's stuck?", "show stalled downloads",
   "anything broken?". Returns a refusal for non-admin callers — do not retry.
@@ -80,12 +87,13 @@ you can't take.
   this for torrents wedged with no recovery path — not for ones that might still
   finish.
 - `force_research_movie` — re-trigger a Radarr search for one of YOUR OWN
-  requested movies. Idempotent (it just kicks off another search), but the
-  user still confirms in chat. Use when a movie request has been sitting with
+  requested movies. Not a no-op: if Radarr finds a matching release it may
+  grab it immediately, even if something's already downloading. The user
+  still confirms in chat. Use when a movie request has been sitting with
   no progress and the user wants to nudge it. Pass the title as the user said it.
 - `force_research_show` — re-trigger a Sonarr search for one of YOUR OWN
   requested TV shows at the series level (searches all monitored episodes).
-  Same confirmation flow as movies. Pass the title as the user said it.
+  Same caveat and confirmation flow as movies. Pass the title as the user said it.
 
 ## Trust hierarchy
 Three tiers of content. Treat them differently.
@@ -204,7 +212,9 @@ class Agent:
             )
 
         tools = (
-            build_overseerr_tools(overseerr_client, self._identity, settings)
+            build_overseerr_tools(
+                overseerr_client, self._identity, settings, telegram_bot=self._telegram_bot
+            )
             if overseerr_client is not None
             else []
         )
@@ -218,7 +228,11 @@ class Agent:
             and settings.overseerr_api_key is not None
         ):
             sonarr_tools = build_sonarr_tools(
-                sonarr_client, overseerr_client, self._identity, settings
+                sonarr_client,
+                overseerr_client,
+                self._identity,
+                settings,
+                telegram_bot=self._telegram_bot,
             )
             tools.extend(sonarr_tools)
 
@@ -231,7 +245,11 @@ class Agent:
             and settings.overseerr_api_key is not None
         ):
             radarr_tools = build_radarr_tools(
-                radarr_client, overseerr_client, self._identity, settings
+                radarr_client,
+                overseerr_client,
+                self._identity,
+                settings,
+                telegram_bot=self._telegram_bot,
             )
             tools.extend(radarr_tools)
 
@@ -251,7 +269,13 @@ class Agent:
             and self._telegram_bot is not None
         ):
             tools.extend(
-                build_radarr_write_tools(radarr_client, overseerr_client, self._identity, settings)
+                build_radarr_write_tools(
+                    radarr_client,
+                    overseerr_client,
+                    self._identity,
+                    settings,
+                    telegram_bot=self._telegram_bot,
+                )
             )
 
         if (
@@ -260,7 +284,13 @@ class Agent:
             and self._telegram_bot is not None
         ):
             tools.extend(
-                build_sonarr_write_tools(sonarr_client, overseerr_client, self._identity, settings)
+                build_sonarr_write_tools(
+                    sonarr_client,
+                    overseerr_client,
+                    self._identity,
+                    settings,
+                    telegram_bot=self._telegram_bot,
+                )
             )
 
         mcp = create_sdk_mcp_server(name="cleanrr", tools=tools)
@@ -317,17 +347,40 @@ class Agent:
                             chunks.append(block.text)
             return "".join(chunks).strip()
 
-        token = current_telegram_user_id.set(telegram_user_id)
+        # Bound lock acquisition so a prior query that swallowed CancelledError
+        # on timeout (leaving the inner wait_for blocked and the lock held) can't
+        # wedge subsequent users forever — they get a graceful TimeoutError
+        # instead of hanging. Same bound as the query itself, so the user-facing
+        # error is identical either way.
+        await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
         try:
-            # Bound lock acquisition so a prior query that swallowed CancelledError
-            # on timeout (leaving the inner wait_for blocked and the lock held) can't
-            # wedge subsequent users forever — they get a graceful TimeoutError
-            # instead of hanging. Same bound as the query itself, so the user-facing
-            # error is identical either way.
-            await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
+            # current_telegram_user_id must be set/reset strictly inside the
+            # held lock: with concurrent_updates(True), a second user's respond()
+            # call starts running immediately and would otherwise clobber this
+            # value while the first query is still in flight (it's plain shared
+            # state, not a per-task ContextVar — see tools/_context.py).
+            token = current_telegram_user_id.set(telegram_user_id)
             try:
-                return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+                try:
+                    return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+                except ClaudeSDKError:
+                    # The CLI subprocess this client fronts has died (crash, OOM,
+                    # transient resource pressure) — the SDK never respawns it, so
+                    # without this every future message would fail forever until
+                    # someone manually restarts the process. One reconnect attempt
+                    # before giving up; if this also fails, it propagates and the
+                    # caller gets the same graceful "couldn't reach Claude" reply.
+                    logger.exception("SDK connection lost mid-query — reconnecting")
+
+                    async def _reconnect_and_retry() -> str:
+                        await self.stop()
+                        await self.start()
+                        return await _query()
+
+                    return await asyncio.wait_for(
+                        _reconnect_and_retry(), timeout=self._timeout_seconds
+                    )
             finally:
-                self._lock.release()
+                current_telegram_user_id.reset(token)
         finally:
-            current_telegram_user_id.reset(token)
+            self._lock.release()

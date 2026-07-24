@@ -11,7 +11,12 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.tools._context import current_telegram_user_id
-from cleanrr.tools._qbittorrent_auth import QbitAuthError, fetch_torrents, login
+from cleanrr.tools._qbittorrent_auth import (
+    QbitAuthError,
+    fetch_torrents,
+    login,
+    normalize_torrent_hash,
+)
 from cleanrr.tools._results import text_result
 
 logger = logging.getLogger(__name__)
@@ -48,14 +53,8 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 is_error=True,
             )
 
-        torrent_hash = args.get("torrent_hash", "")
-        if not isinstance(torrent_hash, str) or not torrent_hash.strip():
-            metrics.tool_calls_total.labels(tool="delete_torrent", status="bad_args").inc()
-            return text_result("Bad torrent hash.", is_error=True)
-        torrent_hash = torrent_hash.strip().lower()
-        # qBit hashes are 40-char SHA-1 hex. Reject anything else so a hostile
-        # arg can't be smuggled into the hashes= form field.
-        if len(torrent_hash) != 40 or not all(c in "0123456789abcdef" for c in torrent_hash):
+        torrent_hash = normalize_torrent_hash(args.get("torrent_hash"))
+        if torrent_hash is None:
             metrics.tool_calls_total.labels(tool="delete_torrent", status="bad_args").inc()
             return text_result("Bad torrent hash.", is_error=True)
 
@@ -66,9 +65,8 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             return text_result("Internal error — user context unavailable.", is_error=True)
 
         if caller_id not in settings.admin_telegram_ids:
-            # Admin gate is a pre-confirmation guard, not a confirmation outcome,
-            # so it stays out of destructive_actions_total (which is locked to the
-            # Outcome literal). tool_calls_total carries the unauthorized signal.
+            # Pre-confirmation guard, not a confirmation outcome — see
+            # permissions.Outcome for why this isn't destructive_actions_total.
             metrics.tool_calls_total.labels(tool="delete_torrent", status="unauthorized").inc()
             return text_result("Only the admin can delete torrents.", is_error=True)
 
