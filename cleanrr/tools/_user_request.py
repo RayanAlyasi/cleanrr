@@ -5,14 +5,18 @@ import difflib
 import logging
 import re
 from dataclasses import dataclass, field
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 import httpx
+from telegram.error import TelegramError
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
+
+if TYPE_CHECKING:
+    import telegram
 
 logger = logging.getLogger(__name__)
 
@@ -23,16 +27,27 @@ _YEAR_PATTERN = re.compile(r"\s*\(?\b(19|20)\d{2}\b\)?\s*$")
 # Caps concurrent /movie or /tv detail calls per enrich_titles_with_names() batch —
 # a self-hosted Overseerr shouldn't take 50 simultaneous requests for one lookup.
 _TITLE_FETCH_CONCURRENCY = 8
+# TMDB's public image CDN — Overseerr's posterPath is always a TMDB-relative
+# path (confirmed against a live instance), not a full URL.
+_TMDB_IMAGE_BASE = "https://image.tmdb.org/t/p/w500"
 
 
-async def _fetch_media_title(
+@dataclass(frozen=True)
+class MediaDetails:
+    title: str | None
+    poster_path: str | None
+
+
+async def _fetch_media_details(
     client: httpx.AsyncClient, base_url: str, media_type: str, tmdb_id: int
-) -> str | None:
-    """Look up a movie/show's display name.
+) -> MediaDetails | None:
+    """Look up a movie/show's display name and poster.
 
-    Overseerr's request-list endpoints return only tmdbId/tvdbId — the title
-    or name comes solely from the per-item /movie or /tv detail endpoint
-    (movies key it "title", TV shows key it "name").
+    Overseerr's request-list endpoints return only tmdbId/tvdbId — title,
+    name, and posterPath come solely from the per-item /movie or /tv detail
+    endpoint (movies key it "title", TV shows key it "name"). posterPath is
+    a TMDB-relative path (e.g. "/gDzOcq0...jpg"); the caller builds a full
+    URL via _TMDB_IMAGE_BASE. Confirmed against a live instance.
     """
     endpoint = "movie" if media_type == "movie" else "tv"
     try:
@@ -48,13 +63,25 @@ async def _fetch_media_title(
     if not isinstance(data, dict):
         return None
     title = data.get("title") or data.get("name")
-    return str(title) if title else None
+    poster_path = data.get("posterPath")
+    return MediaDetails(
+        title=str(title) if title else None,
+        poster_path=poster_path if isinstance(poster_path, str) and poster_path else None,
+    )
+
+
+async def _fetch_media_title(
+    client: httpx.AsyncClient, base_url: str, media_type: str, tmdb_id: int
+) -> str | None:
+    details = await _fetch_media_details(client, base_url, media_type, tmdb_id)
+    return details.title if details is not None else None
 
 
 async def enrich_titles_with_names(
     client: httpx.AsyncClient, base_url: str, requests_list: list[Any]
 ) -> None:
-    """Fill in each request's media title/name in place, fetched concurrently.
+    """Fill in each request's media title/name (and posterPath, if any) in
+    place, fetched concurrently.
 
     No-op for entries that aren't dicts, lack a usable mediaType/tmdbId, or
     fail to resolve — callers already fall back to "Unknown" for those.
@@ -70,9 +97,13 @@ async def enrich_titles_with_names(
         if media_type not in ("movie", "tv") or not isinstance(tmdb_id, int):
             return
         async with semaphore:
-            title = await _fetch_media_title(client, base_url, media_type, tmdb_id)
-        if title:
-            media["title" if media_type == "movie" else "name"] = title
+            details = await _fetch_media_details(client, base_url, media_type, tmdb_id)
+        if details is None:
+            return
+        if details.title:
+            media["title" if media_type == "movie" else "name"] = details.title
+        if details.poster_path:
+            media["posterPath"] = details.poster_path
 
     await asyncio.gather(*(_fill(req) for req in requests_list if isinstance(req, dict)))
 
@@ -93,9 +124,42 @@ class UserRequestLookup:
     ]
     request: dict[str, Any] | None = None
     candidates: list[dict[str, Any]] | None = field(default=None)
+    # True only if at least one poster photo actually sent — render_lookup_error
+    # must not claim "sent photos above" when none went out.
+    posters_sent: bool = False
 
 
 ResolveUserStatus = Literal["ok", "user_not_found", "http_error", "parse_error"]
+
+
+async def _send_match_photos(
+    telegram_bot: telegram.Bot, chat_id: int, candidates: list[dict[str, Any]]
+) -> int:
+    """Best-effort: send each candidate's poster with a numbered caption so
+    the user can pick visually. Returns how many actually sent — candidates
+    without a posterPath are skipped, and a failed send for one candidate
+    doesn't block the others. The numbered text list stays the reliable
+    fallback regardless of how many (if any) photos make it out.
+    """
+    sent = 0
+    for i, req in enumerate(candidates, start=1):
+        media = req.get("media", {})
+        if not isinstance(media, dict):
+            continue
+        poster_path = media.get("posterPath")
+        if not isinstance(poster_path, str) or not poster_path:
+            continue
+        title = str(media.get("title") or media.get("name") or "?")[:80]
+        year = media.get("releaseYear")
+        caption = f"{i}. {title} ({year})" if year else f"{i}. {title}"
+        try:
+            await telegram_bot.send_photo(
+                chat_id=chat_id, photo=f"{_TMDB_IMAGE_BASE}{poster_path}", caption=caption
+            )
+            sent += 1
+        except TelegramError:
+            logger.warning("failed to send match poster for %r", title, exc_info=True)
+    return sent
 
 
 def _title_match_score(query: str, candidate: str) -> float:
@@ -192,10 +256,15 @@ async def find_user_request(
     identity: Identity,
     settings: Settings,
     title: str,
+    *,
+    telegram_bot: telegram.Bot | None = None,
 ) -> UserRequestLookup:
     """Cross-reference telegram user → Overseerr request matching title.
 
     Caller must increment its own tool_calls_total metric based on returned status.
+    When telegram_bot is given and the result is multi_match, best-effort
+    sends poster photos for the candidates so the user can pick visually —
+    see UserRequestLookup.posters_sent.
     """
     if (
         overseerr_client is None
@@ -272,7 +341,13 @@ async def find_user_request(
         original_title = candidates_map[match_key]
         candidate_list.append(title_to_request[original_title])
 
-    return UserRequestLookup(status="multi_match", candidates=candidate_list)
+    posters_sent = False
+    if telegram_bot is not None:
+        posters_sent = await _send_match_photos(telegram_bot, telegram_user_id, candidate_list) > 0
+
+    return UserRequestLookup(
+        status="multi_match", candidates=candidate_list, posters_sent=posters_sent
+    )
 
 
 def render_lookup_error(lookup: UserRequestLookup, title_input: str) -> dict[str, Any] | None:
@@ -319,15 +394,20 @@ def render_lookup_error(lookup: UserRequestLookup, title_input: str) -> dict[str
         if lookup.candidates is None:
             return text_result("An error occurred — try again later.", is_error=True)
         lines = [f"Found {len(lookup.candidates)} possible matches — which one?"]
-        for req in lookup.candidates:
+        for i, req in enumerate(lookup.candidates, start=1):
             media = req.get("media", {})
             # API-supplied title is untrusted; bound it so a hostile/long value
             # can't blow past Telegram's 4096-char reply limit.
             title = str(media.get("title") or media.get("name") or "?")[:80]
             year = media.get("releaseYear")
             if year:
-                lines.append(f"- {title} ({year})")
+                lines.append(f"{i}. {title} ({year})")
             else:
-                lines.append(f"- {title}")
+                lines.append(f"{i}. {title}")
+        if lookup.posters_sent:
+            lines.append(
+                "(Sent poster photos above, numbered to match this list — "
+                "ask the user to reply with the number or title they mean.)"
+            )
         return text_result("\n".join(lines), is_error=False)
     return None

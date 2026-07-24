@@ -9,9 +9,11 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._user_request import (
+    _fetch_media_details,
     _fetch_media_title,
     _fuzzy_match_titles,
     _resolve_user_id,
+    _send_match_photos,
     _title_match_score,
     enrich_titles_with_names,
     find_user_request,
@@ -331,8 +333,106 @@ async def test_find_user_request_multi_match(
         assert result.status == "multi_match"
         assert result.candidates is not None
         assert len(result.candidates) == 2
+        assert result.posters_sent is False
     finally:
         current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_multi_match_sends_photos_when_telegram_bot_given(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Dune Part One", "status": 5, "posterPath": "/a.jpg"},
+            },
+            {
+                "id": 2,
+                "status": 2,
+                "media": {"title": "Dune Part Two", "status": 3, "posterPath": "/b.jpg"},
+            },
+        ]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+    mock_bot = MagicMock()
+    mock_bot.send_photo = AsyncMock()
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(
+            mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot
+        )
+        assert result.status == "multi_match"
+        assert result.posters_sent is True
+        assert mock_bot.send_photo.await_count == 2
+        first_call = mock_bot.send_photo.await_args_list[0]
+        assert first_call.kwargs["chat_id"] == 1
+        assert "image.tmdb.org" in first_call.kwargs["photo"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+# ---------------------------------------------------------------------------
+# _send_match_photos
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_send_match_photos_success_count() -> None:
+    bot = MagicMock()
+    bot.send_photo = AsyncMock()
+    candidates: list[dict[str, object]] = [
+        {"media": {"title": "Dune Part One", "releaseYear": 2021, "posterPath": "/a.jpg"}},
+        {"media": {"title": "Dune Part Two", "releaseYear": 2024, "posterPath": "/b.jpg"}},
+    ]
+
+    sent = await _send_match_photos(bot, 42, candidates)
+
+    assert sent == 2
+    assert bot.send_photo.await_count == 2
+    captions = [c.kwargs["caption"] for c in bot.send_photo.await_args_list]
+    assert captions == ["1. Dune Part One (2021)", "2. Dune Part Two (2024)"]
+
+
+@pytest.mark.asyncio
+async def test_send_match_photos_skips_candidates_without_poster() -> None:
+    bot = MagicMock()
+    bot.send_photo = AsyncMock()
+    candidates: list[dict[str, object]] = [{"media": {"title": "No Poster Movie"}}]
+
+    sent = await _send_match_photos(bot, 42, candidates)
+
+    assert sent == 0
+    bot.send_photo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_match_photos_tolerates_one_failure() -> None:
+    from telegram.error import TelegramError
+
+    bot = MagicMock()
+    bot.send_photo = AsyncMock(side_effect=[TelegramError("boom"), None])
+    candidates: list[dict[str, object]] = [
+        {"media": {"title": "Bad Poster", "posterPath": "/a.jpg"}},
+        {"media": {"title": "Good Poster", "posterPath": "/b.jpg"}},
+    ]
+
+    sent = await _send_match_photos(bot, 42, candidates)
+
+    assert sent == 1
+    assert bot.send_photo.await_count == 2
 
 
 # ---------------------------------------------------------------------------
@@ -648,6 +748,60 @@ async def test_fetch_media_title_returns_none_on_malformed_json(mock_client: Asy
     title = await _fetch_media_title(mock_client, "http://overseerr:5055", "movie", 194)
 
     assert title is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_returns_title_and_poster(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 194, "title": "Amélie", "posterPath": "/abc123.jpg"}
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert details is not None
+    assert details.title == "Amélie"
+    assert details.poster_path == "/abc123.jpg"
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_missing_poster_path_is_none(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 194, "title": "Amélie"}
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert details is not None
+    assert details.poster_path is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_returns_none_on_http_error(mock_client: AsyncMock) -> None:
+    mock_client.get.side_effect = httpx.HTTPError("boom")
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert details is None
+
+
+@pytest.mark.asyncio
+async def test_enrich_titles_fills_poster_path(mock_client: AsyncMock) -> None:
+    requests_list: list[dict[str, object]] = [
+        {"id": 1, "media": {"mediaType": "movie", "tmdbId": 194}}
+    ]
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"id": 194, "title": "Amélie", "posterPath": "/abc123.jpg"}
+    mock_client.get.return_value = resp
+
+    await enrich_titles_with_names(mock_client, "http://overseerr:5055", requests_list)
+
+    media = requests_list[0]["media"]
+    assert isinstance(media, dict)
+    assert media["title"] == "Amélie"
+    assert media["posterPath"] == "/abc123.jpg"
 
 
 @pytest.mark.asyncio

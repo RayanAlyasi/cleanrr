@@ -1,5 +1,7 @@
+from __future__ import annotations
+
 import logging
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import httpx
 from claude_agent_sdk import SdkMcpTool, tool
@@ -11,11 +13,15 @@ from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
 from cleanrr.tools._user_request import (
+    _REQUEST_FETCH_LIMIT,
     _resolve_user_id,
     enrich_titles_with_names,
     find_user_request,
     render_lookup_error,
 )
+
+if TYPE_CHECKING:
+    import telegram
 
 logger = logging.getLogger(__name__)
 
@@ -41,7 +47,10 @@ def _user_id_error_response(tool_name: str, resolve_status: str) -> dict[str, An
 
 
 def build_tools(
-    client: httpx.AsyncClient, identity: Identity, settings: Settings
+    client: httpx.AsyncClient,
+    identity: Identity,
+    settings: Settings,
+    telegram_bot: telegram.Bot | None = None,
 ) -> list[SdkMcpTool]:
     """Factory for Overseerr tools."""
 
@@ -53,7 +62,6 @@ def build_tools(
         {},
     )
     async def list_my_requests(_args: dict[str, Any]) -> dict[str, Any]:
-        # 1. Check if Overseerr is configured
         if settings.overseerr_url is None or settings.overseerr_api_key is None:
             metrics.tool_calls_total.labels(tool="list_my_requests", status="not_configured").inc()
             return text_result(
@@ -62,7 +70,6 @@ def build_tools(
                 is_error=True,
             )
 
-        # 2. Get calling user's telegram ID
         try:
             telegram_user_id = current_telegram_user_id.get()
         except LookupError:
@@ -70,7 +77,6 @@ def build_tools(
             metrics.tool_calls_total.labels(tool="list_my_requests", status="context_missing").inc()
             return text_result("Internal error — couldn't identify caller.", is_error=True)
 
-        # 3. Resolve telegram ID → Overseerr username
         overseerr_username = await identity.get_link(telegram_user_id)
         if overseerr_username is None:
             metrics.tool_calls_total.labels(tool="list_my_requests", status="unlinked_user").inc()
@@ -86,10 +92,9 @@ def build_tools(
             if user_id is None:
                 return _user_id_error_response("list_my_requests", resolve_status)
 
-            # 5. Fetch requests
             requests_resp = await client.get(
                 f"{base_url}/api/v1/user/{user_id}/requests",
-                params={"take": 20},
+                params={"take": _REQUEST_FETCH_LIMIT},
             )
             if requests_resp.status_code != 200:
                 metrics.tool_calls_total.labels(tool="list_my_requests", status="http_error").inc()
@@ -100,8 +105,20 @@ def build_tools(
 
             try:
                 requests_data = requests_resp.json()
-                requests_list = requests_data.get("results", [])
             except ValueError:
+                metrics.tool_calls_total.labels(tool="list_my_requests", status="parse_error").inc()
+                return text_result(
+                    "Unexpected response format from Overseerr — try again later.",
+                    is_error=True,
+                )
+            if not isinstance(requests_data, dict):
+                metrics.tool_calls_total.labels(tool="list_my_requests", status="parse_error").inc()
+                return text_result(
+                    "Unexpected response format from Overseerr — try again later.",
+                    is_error=True,
+                )
+            requests_list = requests_data.get("results", [])
+            if not isinstance(requests_list, list):
                 metrics.tool_calls_total.labels(tool="list_my_requests", status="parse_error").inc()
                 return text_result(
                     "Unexpected response format from Overseerr — try again later.",
@@ -117,7 +134,16 @@ def build_tools(
 
             await enrich_titles_with_names(client, base_url, requests_list)
 
-            lines = [f"You have {len(requests_list)} Overseerr request(s):"]
+            # pageInfo.results is Overseerr's real total; len(requests_list) is
+            # only this page's size and understates the count once truncated
+            # by _REQUEST_FETCH_LIMIT.
+            page_info = requests_data.get("pageInfo")
+            total = page_info.get("results") if isinstance(page_info, dict) else None
+            total = total if isinstance(total, int) else len(requests_list)
+            header = f"You have {total} Overseerr request(s)"
+            if total > len(requests_list):
+                header += f" (showing the {len(requests_list)} most recent)"
+            lines = [header + ":"]
             for req in requests_list:
                 media = req.get("media", {})
                 req_status = req.get("status")
@@ -153,7 +179,9 @@ def build_tools(
     async def find_my_request(args: dict[str, Any]) -> dict[str, Any]:
         title_input = args.get("title", "").strip()
 
-        lookup = await find_user_request(client, identity, settings, title_input)
+        lookup = await find_user_request(
+            client, identity, settings, title_input, telegram_bot=telegram_bot
+        )
         metric_status = "success" if lookup.status == "ok" else lookup.status
         metrics.tool_calls_total.labels(tool="find_my_request", status=metric_status).inc()
 
