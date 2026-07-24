@@ -19,6 +19,10 @@ AGENT_KEY = "agent"
 IDENTITY_KEY = "identity"
 SETTINGS_KEY = "settings"
 
+# Telegram's sendMessage hard cap (core.telegram.org/bots/api#sendmessage):
+# 1-4096 UTF-16 code units. PTB doesn't split or truncate for you.
+_TELEGRAM_MAX_REPLY_CHARS = 4096
+
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     if update.message is None:
@@ -86,8 +90,18 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
     metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
+
+    text = reply or "(no reply)"
+    if len(text) > _TELEGRAM_MAX_REPLY_CHARS:
+        text = text[: _TELEGRAM_MAX_REPLY_CHARS - 1] + "…"
+
+    try:
+        await update.message.reply_text(text)
+    except TelegramError:
+        logger.warning("failed to deliver reply to user %s", user.id, exc_info=True)
+        metrics.claude_requests_total.labels(status="delivery_failed").inc()
+        return
     metrics.claude_requests_total.labels(status="success").inc()
-    await update.message.reply_text(reply or "(no reply)")
 
 
 async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -225,3 +239,10 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Linked you to Overseerr user @{overseerr_username}. You're set."
     )
+
+
+async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Backstop for exceptions PTB's per-handler try/excepts don't cover
+    (e.g. a reply_text call itself raising Forbidden/BadRequest). Without
+    this registered, PTB only logs and drops the update — no visibility."""
+    logger.error("unhandled exception processing update %r", update, exc_info=context.error)

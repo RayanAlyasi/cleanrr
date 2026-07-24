@@ -18,6 +18,7 @@ from cleanrr.handlers import (
     cmd_link,
     cmd_start,
     on_confirmation,
+    on_error,
     on_message,
 )
 from cleanrr.identity import Identity
@@ -147,6 +148,46 @@ async def test_on_message_success_path() -> None:
     agent.respond.assert_awaited_once_with(telegram_user_id=1, prompt="hello")
     update.message.reply_text.assert_awaited_once_with("hi back")
     assert _counter_value({"status": "success"}) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_on_message_truncates_reply_over_telegram_limit() -> None:
+    """Telegram's sendMessage caps at 4096 chars; PTB doesn't truncate for
+    you, so an over-length Claude reply must be cut down before sending or
+    reply_text raises and the message is silently dropped."""
+    settings = _make_settings()
+    agent = MagicMock()
+    agent.respond = AsyncMock(return_value="x" * 5000)
+    update = _make_update("hello")
+    context = _make_context(agent, settings)
+
+    await on_message(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert len(reply) == 4096
+    assert reply.endswith("…")
+
+
+@pytest.mark.asyncio
+async def test_on_message_handles_delivery_failure() -> None:
+    """reply_text itself can raise (e.g. user blocked the bot) — that must
+    not be reported as a successful delivery in metrics."""
+    from telegram.error import Forbidden
+
+    settings = _make_settings()
+    agent = MagicMock()
+    agent.respond = AsyncMock(return_value="hi back")
+    update = _make_update("hello")
+    update.message.reply_text = AsyncMock(side_effect=Forbidden("bot blocked"))
+    context = _make_context(agent, settings)
+
+    before_success = _counter_value({"status": "success"})
+    before_failed = _counter_value({"status": "delivery_failed"})
+
+    await on_message(update, context)  # must not raise
+
+    assert _counter_value({"status": "success"}) == before_success
+    assert _counter_value({"status": "delivery_failed"}) == before_failed + 1
 
 
 @pytest.mark.asyncio
@@ -725,3 +766,18 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
     # Must be enabled — a confirmation button tap has to reach on_confirmation
     # while the message that triggered it is still blocked awaiting that tap.
     assert app.concurrent_updates
+    # Without this, an exception a handler doesn't catch itself (e.g.
+    # reply_text raising Forbidden) is only logged internally by PTB and the
+    # update is dropped with no other trace.
+    assert on_error in app.error_handlers
+
+
+@pytest.mark.asyncio
+async def test_on_error_logs_without_raising(caplog: pytest.LogCaptureFixture) -> None:
+    context = MagicMock()
+    context.error = RuntimeError("boom")
+
+    with caplog.at_level(logging.ERROR):
+        await on_error(MagicMock(), context)
+
+    assert "unhandled exception" in caplog.text
