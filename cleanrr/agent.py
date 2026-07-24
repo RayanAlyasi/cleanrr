@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from contextlib import AsyncExitStack
 from typing import TYPE_CHECKING
 
@@ -9,6 +10,7 @@ from claude_agent_sdk import (
     AssistantMessage,
     ClaudeAgentOptions,
     ClaudeSDKClient,
+    ClaudeSDKError,
     TextBlock,
     create_sdk_mcp_server,
 )
@@ -33,6 +35,8 @@ from cleanrr.tools.sonarr_write import build_tools as build_sonarr_write_tools
 
 if TYPE_CHECKING:
     import telegram
+
+logger = logging.getLogger(__name__)
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -317,17 +321,40 @@ class Agent:
                             chunks.append(block.text)
             return "".join(chunks).strip()
 
-        token = current_telegram_user_id.set(telegram_user_id)
+        # Bound lock acquisition so a prior query that swallowed CancelledError
+        # on timeout (leaving the inner wait_for blocked and the lock held) can't
+        # wedge subsequent users forever — they get a graceful TimeoutError
+        # instead of hanging. Same bound as the query itself, so the user-facing
+        # error is identical either way.
+        await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
         try:
-            # Bound lock acquisition so a prior query that swallowed CancelledError
-            # on timeout (leaving the inner wait_for blocked and the lock held) can't
-            # wedge subsequent users forever — they get a graceful TimeoutError
-            # instead of hanging. Same bound as the query itself, so the user-facing
-            # error is identical either way.
-            await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
+            # current_telegram_user_id must be set/reset strictly inside the
+            # held lock: with concurrent_updates(True), a second user's respond()
+            # call starts running immediately and would otherwise clobber this
+            # value while the first query is still in flight (it's plain shared
+            # state, not a per-task ContextVar — see tools/_context.py).
+            token = current_telegram_user_id.set(telegram_user_id)
             try:
-                return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+                try:
+                    return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+                except ClaudeSDKError:
+                    # The CLI subprocess this client fronts has died (crash, OOM,
+                    # transient resource pressure) — the SDK never respawns it, so
+                    # without this every future message would fail forever until
+                    # someone manually restarts the process. One reconnect attempt
+                    # before giving up; if this also fails, it propagates and the
+                    # caller gets the same graceful "couldn't reach Claude" reply.
+                    logger.exception("SDK connection lost mid-query — reconnecting")
+
+                    async def _reconnect_and_retry() -> str:
+                        await self.stop()
+                        await self.start()
+                        return await _query()
+
+                    return await asyncio.wait_for(
+                        _reconnect_and_retry(), timeout=self._timeout_seconds
+                    )
             finally:
-                self._lock.release()
+                current_telegram_user_id.reset(token)
         finally:
-            current_telegram_user_id.reset(token)
+            self._lock.release()

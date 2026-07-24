@@ -12,6 +12,7 @@ from pydantic import HttpUrl, SecretStr
 from cleanrr.agent import Agent
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.tools._context import current_telegram_user_id
 
 
 @pytest.fixture()
@@ -555,3 +556,125 @@ async def test_lock_releases_after_timeout() -> None:
         timeout=5.0,
     )
     assert result == "second call"
+
+
+@pytest.mark.asyncio
+async def test_context_user_id_not_clobbered_by_concurrent_respond() -> None:
+    """Regression: current_telegram_user_id must only change once a respond()
+    call actually holds the lock. With concurrent_updates(True) enabled bot-
+    wide, a second user's respond() starts running immediately while a first
+    query is still in flight — if set() ran before lock acquisition, the
+    second call would clobber the value the first query's tool calls rely on.
+    """
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+
+    observed_during_first: int | None = None
+
+    async def _first_generator() -> AsyncIterator[AssistantMessage]:
+        nonlocal observed_during_first
+        # Real delay so the second respond() call gets scheduled and, under
+        # the bug, sets current_telegram_user_id before this query finishes.
+        await asyncio.sleep(0.05)
+        observed_during_first = current_telegram_user_id.get()
+        yield _make_text_message("first done")
+
+    async def _second_generator() -> AsyncIterator[AssistantMessage]:
+        yield _make_text_message("second done")
+
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        return _first_generator() if call_count == 1 else _second_generator()
+
+    mock_client.receive_response = _receive_response
+    agent._client = mock_client
+
+    first_task = asyncio.create_task(agent.respond(telegram_user_id=111, prompt="a"))
+    await asyncio.sleep(0)
+    second_task = asyncio.create_task(agent.respond(telegram_user_id=222, prompt="b"))
+
+    first_result = await first_task
+    second_result = await second_task
+
+    assert first_result == "first done"
+    assert second_result == "second done"
+    assert observed_during_first == 111
+
+
+@pytest.mark.asyncio
+async def test_respond_reconnects_once_after_sdk_connection_error() -> None:
+    """Regression: the SDK never respawns a dead CLI subprocess on its own
+    (confirmed against installed claude_agent_sdk source) — without a
+    reconnect here, one crash would permanently break every future message
+    until someone manually restarts the process."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise CLIConnectionError("subprocess died")
+        return _fast_generator("recovered")
+
+    mock_client.receive_response = _receive_response
+    agent._client = mock_client
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    result = await agent.respond(telegram_user_id=1, prompt="hello")
+
+    assert result == "recovered"
+    agent.stop.assert_awaited_once()
+    agent.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_respond_propagates_when_reconnect_also_fails() -> None:
+    """If the reconnect itself can't recover the session, the failure must
+    still surface (handlers.py's generic except turns it into a graceful
+    reply) rather than hanging or being swallowed."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: (_ for _ in ()).throw(
+        CLIConnectionError("subprocess died")
+    )
+    agent._client = mock_client
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(CLIConnectionError):
+        await agent.respond(telegram_user_id=1, prompt="hello")
+
+    agent.stop.assert_awaited_once()
+    agent.start.assert_awaited_once()
