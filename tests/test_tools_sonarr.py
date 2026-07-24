@@ -229,6 +229,11 @@ async def test_get_show_status_partial_with_queue(
     try:
         result = await get_show_status.handler({"title": "The Bear"})
         assert "22 of 30 episodes ready, 2 downloading" in result["content"][0]["text"]
+
+        # Regression: Sonarr's queue endpoint only filters on the plural,
+        # array-bound "seriesIds" — "seriesId" is silently ignored server-side.
+        queue_call = mock_sonarr_client.get.call_args_list[1]
+        assert queue_call.kwargs["params"]["seriesIds"] == [2]
     finally:
         current_telegram_user_id.reset(token)
 

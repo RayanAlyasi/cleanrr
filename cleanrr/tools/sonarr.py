@@ -122,7 +122,10 @@ def build_tools(
             try:
                 queue_resp = await sonarr_client.get(
                     f"{base_url}/api/v3/queue",
-                    params={"seriesId": series_id, "pageSize": 50},
+                    # Sonarr's queue endpoint filters on seriesIds (plural, array-
+                    # bound) — seriesId is silently ignored and returns the whole
+                    # instance's queue instead of just this show's.
+                    params={"seriesIds": [series_id], "pageSize": 50},
                 )
                 if queue_resp.status_code == 200:
                     try:

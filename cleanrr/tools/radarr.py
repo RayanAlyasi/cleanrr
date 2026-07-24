@@ -128,7 +128,10 @@ def build_tools(
             try:
                 queue_resp = await radarr_client.get(
                     f"{base_url}/api/v3/queue",
-                    params={"movieId": movie_id, "pageSize": 10},
+                    # Radarr's queue endpoint filters on movieIds (plural, array-
+                    # bound) — movieId is silently ignored and returns the whole
+                    # instance's queue instead of just this movie's.
+                    params={"movieIds": [movie_id], "pageSize": 10},
                 )
                 if queue_resp.status_code == 200:
                     try:
