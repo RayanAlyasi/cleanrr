@@ -125,12 +125,15 @@ def _fuzzy_match_titles(query: str, candidates: list[str]) -> list[str]:
     return [c for c, _ in scored[:_FUZZY_MATCH_LIMIT]]
 
 
+_USER_SEARCH_PAGE_SIZE = 50
+
+
 async def _resolve_user_id(
     client: httpx.AsyncClient, base_url: str, username: str
 ) -> tuple[int | None, ResolveUserStatus]:
     user_search = await client.get(
         f"{base_url}/api/v1/user",
-        params={"q": username, "take": 1},
+        params={"q": username, "take": _USER_SEARCH_PAGE_SIZE},
     )
     if user_search.status_code == 404:
         return None, "user_not_found"
@@ -150,8 +153,36 @@ async def _resolve_user_id(
     if not users:
         return None, "user_not_found"
 
+    # The `q` filter is a Jellyseerr extension, not guaranteed on vanilla
+    # Overseerr's /user endpoint — a non-filtering backend would return an
+    # unrelated page of users with `q` silently ignored. Prefer an exact
+    # (case-insensitive) username match over every field Overseerr/Jellyseerr
+    # may key a login by; only fall back to position 0 when there's a single
+    # candidate to begin with (the ambiguous, dangerous case is specifically
+    # *multiple* non-matching candidates — picking blindly there risks
+    # resolving to the wrong account).
+    target = username.casefold()
+
+    def _matches(user: object) -> bool:
+        if not isinstance(user, dict):
+            return False
+        candidates = (
+            user.get("username"),
+            user.get("plexUsername"),
+            user.get("jellyfinUsername"),
+        )
+        return any(isinstance(c, str) and c.casefold() == target for c in candidates)
+
+    matched = next((u for u in users if _matches(u)), None)
+    if matched is None:
+        if len(users) != 1:
+            return None, "user_not_found"
+        if not isinstance(users[0], dict):
+            return None, "parse_error"
+        matched = users[0]
+
     try:
-        return users[0]["id"], "ok"
+        return matched["id"], "ok"
     except (KeyError, TypeError):
         return None, "parse_error"
 
@@ -222,7 +253,10 @@ async def find_user_request(
         if media_title:
             title_to_request[media_title] = req
 
-    query = _YEAR_PATTERN.sub("", title_input).lower()
+    # Strip a trailing "(YYYY)" year suffix so "Dune (2021)" matches "Dune" —
+    # but not when the whole query IS a year ("1917", "2012" are real titles),
+    # which would otherwise leave an empty string that ties every candidate.
+    query = _YEAR_PATTERN.sub("", title_input).lower() or title_input.lower()
     candidates_map = {t.lower(): t for t in title_to_request}
     matches = _fuzzy_match_titles(query, list(candidates_map))
 

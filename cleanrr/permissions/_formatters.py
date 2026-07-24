@@ -73,6 +73,8 @@ _OVERSEERR_REQUEST_STATUS_LABELS = {
     1: "pending",
     2: "approved",
     3: "declined",
+    4: "failed",
+    5: "completed",
 }
 
 

@@ -486,6 +486,8 @@ def test_request_status_label_known_and_unknown() -> None:
     assert _request_status_label(1) == "pending"
     assert _request_status_label(2) == "approved"
     assert _request_status_label(3) == "declined"
+    assert _request_status_label(4) == "failed"
+    assert _request_status_label(5) == "completed"
     assert _request_status_label(99) == "status 99"
     assert _request_status_label(None) == "unknown"
     assert _request_status_label("foo") == "unknown"

@@ -145,6 +145,62 @@ async def test_resolve_user_id_non_dict_result_entry(mock_client: AsyncMock) -> 
     assert label == "parse_error"
 
 
+@pytest.mark.asyncio
+async def test_resolve_user_id_picks_exact_match_from_unfiltered_results(
+    mock_client: AsyncMock,
+) -> None:
+    """Vanilla Overseerr's /user endpoint doesn't support `q` filtering (only
+    Jellyseerr does) — a non-filtering backend returns an unrelated page of
+    users. Must find "alice" by exact match rather than trusting position 0."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "results": [
+            {"id": 1, "username": "zx307"},
+            {"id": 11, "username": "alice"},
+            {"id": 5, "plexUsername": "Mum"},
+        ]
+    }
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 11
+    assert label == "ok"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_case_insensitive_match(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"id": 3, "jellyfinUsername": "Alice"}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 3
+    assert label == "ok"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_ambiguous_no_match_among_multiple_is_not_found(
+    mock_client: AsyncMock,
+) -> None:
+    """Multiple non-matching candidates with no `q` filtering in effect —
+    refuse to guess rather than silently resolving to the wrong account."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "results": [
+            {"id": 1, "username": "zx307"},
+            {"id": 5, "username": "Mum"},
+        ]
+    }
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "user_not_found"
+
+
 # ---------------------------------------------------------------------------
 # find_user_request
 # ---------------------------------------------------------------------------
@@ -489,6 +545,40 @@ async def test_find_user_request_year_stripped_from_query(
         assert result.status == "ok"
         assert result.request is not None
         assert result.request["media"]["title"] == "Severance"
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_title_that_is_only_a_year(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """Regression: "1917" is a real movie title, not just a year suffix to
+    strip. Stripping it to "" made every candidate tie at the same fuzzy
+    score, so the match was effectively random instead of picking "1917"."""
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "1917", "status": 5}},
+            {"id": 2, "status": 2, "media": {"title": "Severance", "status": 3}},
+        ]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await find_user_request(mock_client, mock_identity, settings, "1917")
+        assert result.status == "ok"
+        assert result.request is not None
+        assert result.request["media"]["title"] == "1917"
     finally:
         current_telegram_user_id.reset(token)
 
