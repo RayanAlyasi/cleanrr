@@ -120,9 +120,8 @@ def build_tools(
         requested_by = request_data.get("requestedBy")
         owner_id = requested_by.get("id") if isinstance(requested_by, dict) else None
         if owner_id != caller_user_id:
-            # Ownership failure is a pre-confirmation guard, not a confirmation outcome,
-            # so it stays out of destructive_actions_total (which is locked to the
-            # Outcome literal). tool_calls_total carries the unauthorized signal.
+            # Pre-confirmation guard, not a confirmation outcome — see
+            # permissions.Outcome for why this isn't destructive_actions_total.
             metrics.tool_calls_total.labels(tool="remove_my_request", status="unauthorized").inc()
             logger.warning(
                 "remove_my_request ownership mismatch: caller=%s request_owner=%s request_id=%d",

@@ -125,7 +125,7 @@ def build_tools(
             total = stats.get("episodeCount", 0)
             have = stats.get("episodeFileCount", 0)
 
-            # Fetch queue — don't fail the tool if this errors
+            # Don't fail the tool if this errors — episode counts alone are still useful.
             queue_records = []
             try:
                 queue_resp = await sonarr_client.get(
