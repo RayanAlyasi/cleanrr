@@ -318,8 +318,8 @@ class Agent:
     async def respond(self, *, prompt: str) -> str:
         if self._client is None:
             raise RuntimeError("Agent.start() must be called before respond()")
-        telegram_user_id = self._telegram_user_id
-        assert telegram_user_id is not None  # set alongside self._client in start()
+        # Always set alongside self._client in start(), so guaranteed non-None here.
+        telegram_user_id: int = self._telegram_user_id  # type: ignore[assignment]
 
         session_id = f"telegram_{telegram_user_id}"
 
