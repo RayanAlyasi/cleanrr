@@ -34,13 +34,6 @@ def test_render_not_configured() -> None:
     assert "Overseerr isn't configured" in result["content"][0]["text"]
 
 
-def test_render_context_missing() -> None:
-    result = render_lookup_error(_lookup("context_missing"), "Dune")
-    assert result is not None
-    assert result["is_error"] is True
-    assert "Internal error" in result["content"][0]["text"]
-
-
 def test_render_unlinked_user() -> None:
     result = render_lookup_error(_lookup("unlinked_user"), "Dune")
     assert result is not None

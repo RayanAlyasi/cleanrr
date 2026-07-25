@@ -8,7 +8,6 @@ import pytest
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._user_request import (
     _fetch_media_details,
     _fetch_media_title,
@@ -224,17 +223,8 @@ async def test_resolve_user_id_ambiguous_no_match_among_multiple_is_not_found(
 @pytest.mark.asyncio
 async def test_find_user_request_not_configured(mock_identity: MagicMock) -> None:
     unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
-    result = await find_user_request(None, mock_identity, unconfigured, "Dune")
+    result = await find_user_request(None, mock_identity, unconfigured, "Dune", telegram_user_id=1)
     assert result.status == "not_configured"
-
-
-@pytest.mark.asyncio
-async def test_find_user_request_context_missing(
-    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
-) -> None:
-    result = await find_user_request(mock_client, mock_identity, settings, "Dune")
-    assert result.status == "context_missing"
-    assert mock_client.get.call_count == 0
 
 
 @pytest.mark.asyncio
@@ -243,12 +233,10 @@ async def test_find_user_request_unlinked_user(
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Dune")
-        assert result.status == "unlinked_user"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Dune", telegram_user_id=1
+    )
+    assert result.status == "unlinked_user"
 
 
 @pytest.mark.asyncio
@@ -257,12 +245,10 @@ async def test_find_user_request_empty_title(
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value="alice")
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "   ")
-        assert result.status == "empty_input"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "   ", telegram_user_id=1
+    )
+    assert result.status == "empty_input"
 
 
 @pytest.mark.asyncio
@@ -283,14 +269,12 @@ async def test_find_user_request_exact_match_returns_request(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "severance")
-        assert result.status == "ok"
-        assert result.request is not None
-        assert result.request["media"]["title"] == "Severance"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+    assert result.status == "ok"
+    assert result.request is not None
+    assert result.request["media"]["title"] == "Severance"
 
 
 @pytest.mark.asyncio
@@ -311,12 +295,10 @@ async def test_find_user_request_no_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "X-Files 1999")
-        assert result.status == "no_match"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "X-Files 1999", telegram_user_id=1
+    )
+    assert result.status == "no_match"
 
 
 @pytest.mark.asyncio
@@ -340,15 +322,13 @@ async def test_find_user_request_multi_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Dune")
-        assert result.status == "multi_match"
-        assert result.candidates is not None
-        assert len(result.candidates) == 2
-        assert result.posters_sent is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Dune", telegram_user_id=1
+    )
+    assert result.status == "multi_match"
+    assert result.candidates is not None
+    assert len(result.candidates) == 2
+    assert result.posters_sent is False
 
 
 @pytest.mark.asyncio
@@ -382,19 +362,15 @@ async def test_find_user_request_multi_match_sends_photos_when_telegram_bot_give
     mock_bot = MagicMock()
     mock_bot.send_photo = AsyncMock()
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(
-            mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot
-        )
-        assert result.status == "multi_match"
-        assert result.posters_sent is True
-        assert mock_bot.send_photo.await_count == 2
-        first_call = mock_bot.send_photo.await_args_list[0]
-        assert first_call.kwargs["chat_id"] == 1
-        assert "image.tmdb.org" in first_call.kwargs["photo"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot, telegram_user_id=1
+    )
+    assert result.status == "multi_match"
+    assert result.posters_sent is True
+    assert mock_bot.send_photo.await_count == 2
+    first_call = mock_bot.send_photo.await_args_list[0]
+    assert first_call.kwargs["chat_id"] == 1
+    assert "image.tmdb.org" in first_call.kwargs["photo"]
 
 
 @pytest.mark.asyncio
@@ -442,17 +418,13 @@ async def test_find_user_request_multi_match_photo_captions_include_real_year(
     mock_bot = MagicMock()
     mock_bot.send_photo = AsyncMock()
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(
-            mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot
-        )
-        assert result.status == "multi_match"
-        captions = [c.kwargs["caption"] for c in mock_bot.send_photo.await_args_list]
-        assert "1. Dune (2021)" in captions
-        assert "2. Dune: Part Two (2024)" in captions
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Dune", telegram_bot=mock_bot, telegram_user_id=1
+    )
+    assert result.status == "multi_match"
+    captions = [c.kwargs["caption"] for c in mock_bot.send_photo.await_args_list]
+    assert "1. Dune (2021)" in captions
+    assert "2. Dune: Part Two (2024)" in captions
 
 
 # ---------------------------------------------------------------------------
@@ -617,11 +589,9 @@ async def test_find_user_request_no_match_ignores_unrelated_titles(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "the flash")
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "the flash", telegram_user_id=1
+    )
 
     assert result.status == "no_match"
 
@@ -641,12 +611,10 @@ async def test_find_user_request_http_error_on_requests_fetch(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Severance")
-        assert result.status == "http_error"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Severance", telegram_user_id=1
+    )
+    assert result.status == "http_error"
 
 
 @pytest.mark.asyncio
@@ -665,12 +633,10 @@ async def test_find_user_request_non_dict_response(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Severance")
-        assert result.status == "parse_error"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Severance", telegram_user_id=1
+    )
+    assert result.status == "parse_error"
 
 
 @pytest.mark.asyncio
@@ -689,12 +655,10 @@ async def test_find_user_request_non_list_results(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Severance")
-        assert result.status == "parse_error"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Severance", telegram_user_id=1
+    )
+    assert result.status == "parse_error"
 
 
 @pytest.mark.asyncio
@@ -719,14 +683,12 @@ async def test_find_user_request_skips_malformed_entries(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "severance")
-        assert result.status == "ok"
-        assert result.request is not None
-        assert result.request["media"]["title"] == "Severance"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+    assert result.status == "ok"
+    assert result.request is not None
+    assert result.request["media"]["title"] == "Severance"
 
 
 @pytest.mark.asyncio
@@ -747,14 +709,12 @@ async def test_find_user_request_year_stripped_from_query(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "Severance (2022)")
-        assert result.status == "ok"
-        assert result.request is not None
-        assert result.request["media"]["title"] == "Severance"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "Severance (2022)", telegram_user_id=1
+    )
+    assert result.status == "ok"
+    assert result.request is not None
+    assert result.request["media"]["title"] == "Severance"
 
 
 @pytest.mark.asyncio
@@ -781,14 +741,12 @@ async def test_find_user_request_title_that_is_only_a_year(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "1917")
-        assert result.status == "ok"
-        assert result.request is not None
-        assert result.request["media"]["title"] == "1917"
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "1917", telegram_user_id=1
+    )
+    assert result.status == "ok"
+    assert result.request is not None
+    assert result.request["media"]["title"] == "1917"
 
 
 # ---------------------------------------------------------------------------
@@ -1049,11 +1007,9 @@ async def test_find_user_request_resolves_title_when_media_lacks_one(
 
     mock_client.get.side_effect = [user_resp, req_resp, tv_detail_resp]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await find_user_request(mock_client, mock_identity, settings, "severance")
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
 
     assert result.status == "ok"
     assert result.request is not None
