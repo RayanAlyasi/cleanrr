@@ -9,7 +9,6 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
 from cleanrr.tools._user_request import (
@@ -50,6 +49,8 @@ def build_tools(
     client: httpx.AsyncClient,
     identity: Identity,
     settings: Settings,
+    *,
+    telegram_user_id: int,
     telegram_bot: telegram.Bot | None = None,
 ) -> list[SdkMcpTool]:
     """Factory for Overseerr tools."""
@@ -69,13 +70,6 @@ def build_tools(
                 "OVERSEERR_URL and OVERSEERR_API_KEY.",
                 is_error=True,
             )
-
-        try:
-            telegram_user_id = current_telegram_user_id.get()
-        except LookupError:
-            logger.exception("ContextVar not set in tool")
-            metrics.tool_calls_total.labels(tool="list_my_requests", status="context_missing").inc()
-            return text_result("Internal error — couldn't identify caller.", is_error=True)
 
         overseerr_username = await identity.get_link(telegram_user_id)
         if overseerr_username is None:
@@ -180,7 +174,12 @@ def build_tools(
         title_input = args.get("title", "").strip()
 
         lookup = await find_user_request(
-            client, identity, settings, title_input, telegram_bot=telegram_bot
+            client,
+            identity,
+            settings,
+            title_input,
+            telegram_user_id=telegram_user_id,
+            telegram_bot=telegram_bot,
         )
         metric_status = "success" if lookup.status == "ok" else lookup.status
         metrics.tool_calls_total.labels(tool="find_my_request", status=metric_status).inc()
