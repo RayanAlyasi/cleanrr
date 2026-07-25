@@ -698,3 +698,48 @@ async def test_respond_propagates_when_reconnect_also_fails() -> None:
 
     agent.stop.assert_awaited_once()
     agent.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_users_on_separate_agents_dont_block_each_other() -> None:
+    """The bug this refactor fixes: previously every user shared one Agent,
+    whose lock was held for the whole respond() call — including while
+    can_use_tool awaited a confirmation button tap. One user's pending
+    confirmation could stall every other user's message for up to
+    confirmation_ttl_seconds. With one Agent per user (AgentPool), each
+    lock is independent, so this must NOT time out.
+    """
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    agent_a = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent_b = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+
+    async def _stuck_awaiting_confirmation() -> AsyncIterator[AssistantMessage]:
+        # Stands in for a destructive tool call blocked on can_use_tool
+        # awaiting a confirmation tap that hasn't happened yet.
+        await asyncio.sleep(1.0)
+        yield _make_text_message("user a done")
+
+    client_a = AsyncMock()
+    client_a.query = AsyncMock()
+    client_a.receive_response = lambda: _stuck_awaiting_confirmation()
+    agent_a._client = client_a
+    agent_a._telegram_user_id = 111
+
+    client_b = AsyncMock()
+    client_b.query = AsyncMock()
+    client_b.receive_response = lambda: _fast_generator("user b done")
+    agent_b._client = client_b
+    agent_b._telegram_user_id = 222
+
+    task_a = asyncio.create_task(agent_a.respond(prompt="delete something"))
+    await asyncio.sleep(0)  # let task_a start and acquire its own lock
+
+    # Under the old shared-Agent design this would queue behind agent_a's
+    # in-flight confirmation and blow this timeout.
+    result_b = await asyncio.wait_for(agent_b.respond(prompt="hi"), timeout=0.2)
+    assert result_b == "user b done"
+
+    result_a = await task_a
+    assert result_a == "user a done"
