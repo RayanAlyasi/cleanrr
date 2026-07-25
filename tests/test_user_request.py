@@ -149,6 +149,18 @@ async def test_resolve_user_id_non_dict_result_entry(mock_client: AsyncMock) -> 
 
 
 @pytest.mark.asyncio
+async def test_resolve_user_id_matched_user_missing_id_key(mock_client: AsyncMock) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"username": "alice"}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "parse_error"
+
+
+@pytest.mark.asyncio
 async def test_resolve_user_id_picks_exact_match_from_unfiltered_results(
     mock_client: AsyncMock,
 ) -> None:
@@ -470,6 +482,18 @@ async def test_send_match_photos_skips_candidates_without_poster() -> None:
     bot = MagicMock()
     bot.send_photo = AsyncMock()
     candidates: list[dict[str, object]] = [{"media": {"title": "No Poster Movie"}}]
+
+    sent = await _send_match_photos(bot, 42, candidates)
+
+    assert sent == 0
+    bot.send_photo.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_send_match_photos_skips_candidate_with_non_dict_media() -> None:
+    bot = MagicMock()
+    bot.send_photo = AsyncMock()
+    candidates: list[dict[str, object]] = [{"media": "not-a-dict"}]
 
     sent = await _send_match_photos(bot, 42, candidates)
 
@@ -912,6 +936,47 @@ async def test_fetch_media_details_returns_none_on_http_error(mock_client: Async
     details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
 
     assert details is None
+
+
+@pytest.mark.asyncio
+async def test_fetch_media_details_returns_none_on_non_dict_response(
+    mock_client: AsyncMock,
+) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = ["not", "a", "dict"]
+    mock_client.get.return_value = resp
+
+    details = await _fetch_media_details(mock_client, "http://overseerr:5055", "movie", 194)
+
+    assert details is None
+
+
+def test_parse_year_malformed_date_returns_none() -> None:
+    from cleanrr.tools._user_request import _parse_year
+
+    assert _parse_year("not-a-date") is None
+    assert _parse_year(None) is None
+    assert _parse_year("abc") is None
+
+
+@pytest.mark.asyncio
+async def test_enrich_titles_leaves_media_untouched_when_fetch_fails(
+    mock_client: AsyncMock,
+) -> None:
+    """A failed per-item detail fetch must not crash the whole enrichment
+    batch — the caller already falls back to "Unknown" for unresolved items."""
+    requests_list: list[dict[str, object]] = [
+        {"id": 1, "media": {"mediaType": "movie", "tmdbId": 194}}
+    ]
+    mock_client.get.side_effect = httpx.HTTPError("boom")
+
+    await enrich_titles_with_names(mock_client, "http://overseerr:5055", requests_list)
+
+    media = requests_list[0]["media"]
+    assert isinstance(media, dict)
+    assert "title" not in media
+    assert "posterPath" not in media
 
 
 @pytest.mark.asyncio

@@ -667,6 +667,70 @@ async def test_get_movie_status_queue_fetch_fails_still_returns_movie(
 
 
 @pytest.mark.asyncio
+async def test_get_movie_status_queue_malformed_json_still_returns_movie(
+    mock_radarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp, req_resp = _make_overseerr_ok()
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+
+    movie_resp = MagicMock()
+    movie_resp.status_code = 200
+    movie_resp.json.return_value = [{"id": 42, "title": "Dune", "year": 2021, "hasFile": True}]
+
+    queue_resp = MagicMock()
+    queue_resp.status_code = 200
+    queue_resp.json.side_effect = ValueError("bad json")
+
+    mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
+
+    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    get_movie_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_movie_status.handler({"title": "Dune"})
+        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+        assert result["is_error"] is False
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_movie_status_queue_fetch_raises_still_returns_movie(
+    mock_radarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp, req_resp = _make_overseerr_ok()
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+
+    movie_resp = MagicMock()
+    movie_resp.status_code = 200
+    movie_resp.json.return_value = [{"id": 42, "title": "Dune", "year": 2021, "hasFile": True}]
+
+    mock_radarr_client.get.side_effect = [movie_resp, httpx.ConnectError("boom")]
+
+    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    get_movie_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_movie_status.handler({"title": "Dune"})
+        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+        assert result["is_error"] is False
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
 async def test_get_movie_status_radarr_http_exception(
     mock_radarr_client: AsyncMock,
     mock_overseerr_client: AsyncMock,

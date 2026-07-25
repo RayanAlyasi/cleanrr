@@ -130,6 +130,60 @@ async def test_start_wires_mcp_when_overseerr_configured(monkeypatch: pytest.Mon
 
 
 @pytest.mark.asyncio
+async def test_start_twice_is_a_noop(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Calling start() while already started must not re-initialize."""
+    from cleanrr import agent as agent_module
+
+    init_count = 0
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            nonlocal init_count
+            init_count += 1
+            self._options = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+
+    await agent.start()
+    await agent.start()
+
+    assert init_count == 1
+    await agent.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_before_start_is_a_noop() -> None:
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+
+    await agent.stop()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_respond_before_start_raises() -> None:
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+
+    with pytest.raises(RuntimeError, match=r"Agent\.start"):
+        await agent.respond(telegram_user_id=1, prompt="hello")
+
+
+@pytest.mark.asyncio
 async def test_start_with_no_overseerr_config_registers_no_tools(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

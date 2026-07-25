@@ -195,6 +195,71 @@ async def test_login_failure_returns_auth_error(mock_client: AsyncMock, settings
 
 
 @pytest.mark.asyncio
+async def test_http_error_fetching_torrent_pre_delete(
+    mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_client.post.return_value = _login_ok()
+    mock_client.get.side_effect = httpx.RequestError("boom")
+
+    tools = build_tools(mock_client, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "unreachable" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_malformed_json_fetching_torrent_pre_delete(
+    mock_client: AsyncMock, settings: Settings
+) -> None:
+    bad_json = MagicMock()
+    bad_json.status_code = 200
+    bad_json.json.side_effect = ValueError("parse_error")
+    mock_client.post.return_value = _login_ok()
+    mock_client.get.return_value = bad_json
+
+    tools = build_tools(mock_client, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is True
+    assert "unexpected response" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_verification_fetch_failure_after_delete_treated_as_success(
+    mock_client: AsyncMock, settings: Settings
+) -> None:
+    """We already issued the DELETE by the time verification runs — a failed
+    re-fetch shouldn't turn a likely-successful delete into an error reply."""
+    mock_client.post.side_effect = [_login_ok(), MagicMock(status_code=200)]
+    mock_client.get.side_effect = [_torrent_info(), httpx.RequestError("boom")]
+
+    tools = build_tools(mock_client, settings)
+    tool_fn = tools[0]
+
+    token = current_telegram_user_id.set(123)
+    try:
+        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
+    finally:
+        current_telegram_user_id.reset(token)
+
+    assert result["is_error"] is False
+    assert "Movie.X" in result["content"][0]["text"]
+
+
+@pytest.mark.asyncio
 async def test_http_error_on_delete_returns_friendly(
     mock_client: AsyncMock, settings: Settings
 ) -> None:

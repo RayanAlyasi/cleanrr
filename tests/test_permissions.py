@@ -17,7 +17,7 @@ from cleanrr.permissions import (
     make_can_use_tool,
 )
 from cleanrr.permissions._callback import ADMIN_ONLY_TOOLS
-from cleanrr.permissions._formatters import _request_status_label
+from cleanrr.permissions._formatters import _format_bytes, _request_status_label
 from cleanrr.tools._context import current_telegram_user_id
 
 
@@ -213,6 +213,67 @@ async def test_sweeper_task_starts_and_stops() -> None:
     reg = ConfirmationRegistry(ttl_seconds=60)
     await reg.start()
     await reg.stop()
+
+
+@pytest.mark.asyncio
+async def test_sweeper_start_twice_is_a_noop() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    await reg.start()
+    task = reg._sweeper_task
+    await reg.start()  # must not replace the running task
+    assert reg._sweeper_task is task
+    await reg.stop()
+
+
+@pytest.mark.asyncio
+async def test_stop_survives_sweeper_crash_on_cancel() -> None:
+    """A sweeper task that raises something other than CancelledError while
+    being torn down must not propagate out of stop() — shutdown must finish."""
+    reg = ConfirmationRegistry(ttl_seconds=60)
+
+    # Don't call reg.start() — swap in a task that reacts to cancellation by
+    # raising instead of propagating CancelledError, simulating a sweeper
+    # that crashes mid-teardown.
+    async def _crash_instead_of_cancelling() -> None:
+        try:
+            await asyncio.sleep(999)
+        except asyncio.CancelledError:
+            raise RuntimeError("boom") from None
+
+    reg._sweeper_task = asyncio.ensure_future(_crash_instead_of_cancelling())
+    await asyncio.sleep(0)  # let it start awaiting
+
+    await reg.stop()  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_sweep_loop_logs_and_survives_internal_exception(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected exception inside the sweep loop's own eviction pass
+    must be logged, not silently kill the background task."""
+    reg = ConfirmationRegistry(ttl_seconds=0.01)  # sweep interval floors at 1.0s regardless
+
+    call_count = 0
+    original = reg._evict_expired_locked
+
+    def _flaky_evict() -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("boom")
+        original()
+
+    monkeypatch.setattr(reg, "_evict_expired_locked", _flaky_evict)
+
+    await reg.start()
+    for _ in range(60):
+        if call_count >= 1:
+            break
+        await asyncio.sleep(0.05)
+    await reg.stop()
+
+    assert call_count >= 1
 
 
 # ---------------------------------------------------------------------------
@@ -464,6 +525,77 @@ async def test_remove_my_request_formatter_falls_back_on_http_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_remove_my_request_formatter_falls_back_when_client_none() -> None:
+    formatters = build_confirmation_formatters(None, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+    assert "#7" in text
+
+
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_falls_back_on_non_200() -> None:
+    client = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 404
+    client.get.return_value = resp
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+
+    assert "#7" in text
+
+
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_falls_back_on_malformed_json() -> None:
+    client = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    client.get.return_value = resp
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+
+    assert "#7" in text
+
+
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_falls_back_when_title_resolve_times_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Title-resolution timeout must degrade gracefully, not crash the prompt."""
+    import cleanrr.permissions._formatters as formatters_module
+
+    monkeypatch.setattr(formatters_module, "_FORMATTER_TIMEOUT_SECONDS", 0.05)
+
+    client = AsyncMock()
+    request_resp = MagicMock()
+    request_resp.status_code = 200
+    request_resp.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "media": {"mediaType": "movie", "tmdbId": 194},
+    }
+
+    call_count = 0
+
+    async def _get(*_args: object, **_kwargs: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return request_resp
+        await asyncio.sleep(999)
+        raise AssertionError("unreachable")
+
+    client.get = _get
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await asyncio.wait_for(formatters["remove_my_request"]({"request_id": 7}), timeout=5.0)
+
+    # No resolved title available — falls back to "Unknown" rather than raising.
+    assert "Unknown" in text
+
+
+@pytest.mark.asyncio
 async def test_remove_my_request_formatter_caps_overlong_title() -> None:
     client = AsyncMock()
     resp = MagicMock()
@@ -491,6 +623,93 @@ def test_request_status_label_known_and_unknown() -> None:
     assert _request_status_label(99) == "status 99"
     assert _request_status_label(None) == "unknown"
     assert _request_status_label("foo") == "unknown"
+
+
+def test_format_bytes_invalid_and_negative() -> None:
+    assert _format_bytes("not a number") == "?"
+    assert _format_bytes(-1) == "?"
+
+
+def test_format_bytes_mb_range() -> None:
+    assert _format_bytes(5_242_880) == "5 MB"
+
+
+def test_format_bytes_byte_range() -> None:
+    assert _format_bytes(512) == "512 B"
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_when_client_none() -> None:
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+    )
+    formatters = build_confirmation_formatters(None, None, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+    assert "a" * 40 in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_on_non_200() -> None:
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 500
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+    assert "a" * 40 in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_on_malformed_json() -> None:
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.side_effect = ValueError("bad json")
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+    assert "a" * 40 in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_falls_back_on_non_dict_entry() -> None:
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = ["not-a-dict"]
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+    assert "a" * 40 in text
 
 
 @pytest.mark.asyncio
