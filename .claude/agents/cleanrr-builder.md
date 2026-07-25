@@ -41,6 +41,7 @@ You are forbidden from:
 - Reviewing your own output. The reviewer agent does that.
 - Editing `CHANGELOG.md`. release-please owns it.
 - Adding `Co-Authored-By` trailers.
+- Implementing a spec's assumption about library/SDK behavior that you can see is wrong. You have no WebFetch/WebSearch, but you can read the installed library's actual source under `site-packages/` via `Read`/`Grep`/`Bash` — if it's load-bearing and cheap to check, check it. If source contradicts the spec, STOP and flag it rather than shipping the wrong assumption. See `doc-verification.md`.
 
 ## Out of Scope
 

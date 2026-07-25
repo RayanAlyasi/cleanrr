@@ -10,4 +10,6 @@ For every line of code the spec dictates, ask: **does it actually do what its na
 - **Idempotency.** If a handler can be called twice (retry, reconnect, replay), does the spec's mutation hold? Re-runs should converge, not drift.
 - **Conditional work.** If a feature is opt-in (`*_ENABLED=false` by default), gate the work behind the flag. Don't run DB queries or background tasks for nobody.
 
+**External library/API behavior.** If a line of the spec depends on how a third-party library, SDK, or external API behaves — not just internal codebase logic — verify that behavior against actually-fetched current docs or source before finalizing the spec. `cleanrr-builder` has no WebFetch/WebSearch access and implements verbatim; this is the only point in the pipeline where that research can happen. See `doc-verification.md` for the concrete gotcha list this project has already been burned by.
+
 The downstream agents (builder, reviewer, security) are each scoped to their lane and won't deviate from a flawed spec. Catching it here is the highest-leverage move. `/cleanrr-ship` runs an Opus final review as a backstop, but that's a backstop — not a substitute for spec discipline.

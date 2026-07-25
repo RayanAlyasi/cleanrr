@@ -33,9 +33,13 @@ Agent(subagent_type="cleanrr-security", description="Whole-project security audi
       prompt="Audit the entire cleanrr/ tree. Run bandit. Apply the full security checklist.")
 ```
 
-### Step 2 — Consolidate
+### Step 2 — Resolve `## Verify` items
 
-Merge both reports. Order: Blockers + Critical first, then High, then Medium, then Suggestions. Cite the source agent for each finding.
+Neither agent has WebFetch/WebSearch, so any claim depending on library/SDK/API behavior they can't confirm by reading lands in `## Verify` instead of a severity bucket. Dispatch a research-capable agent (`general-purpose`, which has WebFetch/WebSearch) to resolve each one against actual current docs/source before consolidating — an unresolved `## Verify` item is not the same as "no issue found." See `doc-verification.md`.
+
+### Step 3 — Consolidate
+
+Merge both reports plus the resolved Verify items. Order: Blockers + Critical first, then High, then Medium, then Suggestions. Cite the source agent for each finding.
 
 ## Output Format
 

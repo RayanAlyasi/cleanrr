@@ -33,6 +33,8 @@ You are forbidden from:
 ### Step 1 — Parse spec, create branch
 Read the spec. Extract: branch name (`feat|fix|chore/<slug>`), commit-message subject, files expected to change.
 
+If any spec line depends on how a third-party library, SDK, or external API behaves, verify it against actual current docs/source now (WebFetch/WebSearch) — this is the only step in the pipeline with that tool access; `cleanrr-builder` implements verbatim and cannot research. See `doc-verification.md`.
+
 ```
 git checkout main && git pull --rebase origin main
 git checkout -b <branch>
