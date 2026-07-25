@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock
 
@@ -559,10 +560,11 @@ async def test_remove_my_request_formatter_falls_back_on_malformed_json() -> Non
 
 
 @pytest.mark.asyncio
-async def test_remove_my_request_formatter_falls_back_when_title_resolve_times_out(
+async def test_remove_my_request_formatter_degrades_to_unknown_when_title_resolve_times_out(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """Title-resolution timeout must degrade gracefully, not crash the prompt."""
+    """A slow title lookup must degrade gracefully (still show status/media
+    type, just no title) rather than losing the whole prompt to fallback."""
     import cleanrr.permissions._formatters as formatters_module
 
     monkeypatch.setattr(formatters_module, "_FORMATTER_TIMEOUT_SECONDS", 0.05)
@@ -593,6 +595,54 @@ async def test_remove_my_request_formatter_falls_back_when_title_resolve_times_o
 
     # No resolved title available — falls back to "Unknown" rather than raising.
     assert "Unknown" in text
+
+
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_total_latency_bounded_not_stacked(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Regression: the request fetch and title fetch used to each get their
+    own full _FORMATTER_TIMEOUT_SECONDS budget, so a slow Overseerr could
+    stack to ~2x the intended worst case. Both calls succeeding but each
+    taking most of the budget must still finish within one shared deadline,
+    not two sequential ones."""
+    import cleanrr.permissions._formatters as formatters_module
+
+    monkeypatch.setattr(formatters_module, "_FORMATTER_TIMEOUT_SECONDS", 0.2)
+
+    client = AsyncMock()
+    request_resp = MagicMock()
+    request_resp.status_code = 200
+    request_resp.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "media": {"mediaType": "movie", "tmdbId": 194},
+    }
+    title_resp = MagicMock()
+    title_resp.status_code = 200
+    title_resp.json.return_value = {"id": 194, "title": "Dune"}
+
+    call_count = 0
+
+    async def _get(*_args: object, **_kwargs: object) -> MagicMock:
+        nonlocal call_count
+        call_count += 1
+        # Each individual call is well within the old (unbounded) per-call
+        # budget, but two of them back-to-back would exceed one shared one.
+        await asyncio.sleep(0.15)
+        return request_resp if call_count == 1 else title_resp
+
+    client.get = _get
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    start = time.monotonic()
+    text = await formatters["remove_my_request"]({"request_id": 7})
+    elapsed = time.monotonic() - start
+
+    # Both calls were slow enough to blow the shared budget, so the second
+    # one must have been cut short — falls back rather than doubling latency.
+    assert elapsed < 0.35
+    assert "Dune" not in text
 
 
 @pytest.mark.asyncio

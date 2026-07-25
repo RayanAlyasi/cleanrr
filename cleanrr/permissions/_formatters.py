@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import time
 from collections.abc import Awaitable, Callable
 from typing import Any
 
@@ -29,6 +30,11 @@ def _build_remove_my_request_formatter(
         if overseerr_client is None or settings.overseerr_url is None or request_id is None:
             return fallback
         base_url = str(settings.overseerr_url).rstrip("/")
+        # _FORMATTER_TIMEOUT_SECONDS is a total budget for this formatter, not
+        # per-call — the title lookup below gets whatever's left of it, so a
+        # slow request fetch can't let the two calls stack to 2x the intended
+        # worst-case latency while still degrading gracefully per step.
+        deadline = time.monotonic() + _FORMATTER_TIMEOUT_SECONDS
         try:
             resp = await asyncio.wait_for(
                 overseerr_client.get(f"{base_url}/api/v1/request/{request_id}"),
@@ -46,10 +52,11 @@ def _build_remove_my_request_formatter(
         media_type_raw = media.get("mediaType")
         tmdb_id = media.get("tmdbId")
         if media_type_raw in ("movie", "tv") and isinstance(tmdb_id, int):
+            remaining = max(deadline - time.monotonic(), 0.1)
             try:
                 resolved_title = await asyncio.wait_for(
                     _fetch_media_title(overseerr_client, base_url, media_type_raw, tmdb_id),
-                    timeout=_FORMATTER_TIMEOUT_SECONDS,
+                    timeout=remaining,
                 )
             except TimeoutError:
                 resolved_title = None
