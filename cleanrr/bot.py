@@ -13,11 +13,13 @@ from telegram.ext import (
 )
 
 import cleanrr.metrics as metrics
-from cleanrr.agent import Agent
+from cleanrr.agent_pool import AgentPool
 from cleanrr.config import Settings, clear_sdk_credentials, export_sdk_credentials
 from cleanrr.handlers import (
-    AGENT_KEY,
+    AGENT_POOL_KEY,
+    CONFIRMATION_REGISTRY_KEY,
     IDENTITY_KEY,
+    OVERSEERR_CLIENT_KEY,
     SETTINGS_KEY,
     cmd_help,
     cmd_invite,
@@ -42,14 +44,14 @@ BOT_COMMANDS = [
 ]
 
 # Shared, bot-level resources — constructed once in build_application() and
-# injected into Agent (and, eventually, every per-user Agent) rather than
-# each Agent building its own copy. Keys are module-private; nothing outside
-# bot.py's own startup/shutdown needs to reach into them.
-_OVERSEERR_CLIENT_KEY = "overseerr_client"
+# injected into AgentPool, which hands the same copies to every per-user
+# Agent rather than each one building its own. Overseerr client and the
+# confirmation registry are also read directly by handlers.py (cmd_invite,
+# on_confirmation), so those two keys live there; sonarr/radarr/qbit clients
+# are only needed here for shutdown cleanup, so they stay module-private.
 _SONARR_CLIENT_KEY = "sonarr_client"
 _RADARR_CLIENT_KEY = "radarr_client"
 _QBIT_CLIENT_KEY = "qbit_client"
-_CONFIRMATION_REGISTRY_KEY = "confirmation_registry"
 
 
 def _build_overseerr_client(settings: Settings) -> httpx.AsyncClient | None:
@@ -90,9 +92,8 @@ def _build_qbit_client(settings: Settings) -> httpx.AsyncClient | None:
 
 
 async def _on_startup(app: Application) -> None:
-    registry: ConfirmationRegistry = app.bot_data[_CONFIRMATION_REGISTRY_KEY]
+    registry: ConfirmationRegistry = app.bot_data[CONFIRMATION_REGISTRY_KEY]
     await registry.start()
-    await app.bot_data[AGENT_KEY].start()
     identity: Identity = app.bot_data[IDENTITY_KEY]
     await identity.start()
     await app.bot.set_my_commands(BOT_COMMANDS)
@@ -107,16 +108,16 @@ async def _on_startup(app: Application) -> None:
 async def _on_shutdown(app: Application) -> None:
     logger.info("shutting down")
     agent_error = None
-    # Stop Agent first so any in-flight tool handlers can still resolve Identity.
+    # Stop the pool first so any in-flight tool handlers can still resolve Identity.
     try:
-        await app.bot_data[AGENT_KEY].stop()
+        await app.bot_data[AGENT_POOL_KEY].stop()
     except Exception as e:
         agent_error = e
     try:
         await app.bot_data[IDENTITY_KEY].stop()
-        await app.bot_data[_CONFIRMATION_REGISTRY_KEY].stop()
+        await app.bot_data[CONFIRMATION_REGISTRY_KEY].stop()
         for key in (
-            _OVERSEERR_CLIENT_KEY,
+            OVERSEERR_CLIENT_KEY,
             _SONARR_CLIENT_KEY,
             _RADARR_CLIENT_KEY,
             _QBIT_CLIENT_KEY,
@@ -141,9 +142,10 @@ def build_application(settings: Settings) -> Application:
         # and can_use_tool blocks the triggering update's own handler while it
         # awaits that tap — so the tap could never be dispatched until the
         # confirmation timed out on its own, by which point Telegram had
-        # already invalidated the callback query. cleanrr's own concurrency
-        # limit (Agent._lock, one Claude subprocess at a time) is unaffected —
-        # this only lets otherwise-independent updates interleave.
+        # already invalidated the callback query. Each user's own Agent still
+        # serializes their own messages via its own lock — this only lets
+        # otherwise-independent updates (different users, or a confirmation
+        # tap vs. the message that triggered it) interleave.
         .concurrent_updates(True)
         .build()
     )
@@ -159,13 +161,13 @@ def build_application(settings: Settings) -> Application:
     radarr_client = _build_radarr_client(settings)
     qbit_client = _build_qbit_client(settings)
     confirmation_registry = ConfirmationRegistry(ttl_seconds=settings.confirmation_ttl_seconds)
-    app.bot_data[_OVERSEERR_CLIENT_KEY] = overseerr_client
+    app.bot_data[OVERSEERR_CLIENT_KEY] = overseerr_client
     app.bot_data[_SONARR_CLIENT_KEY] = sonarr_client
     app.bot_data[_RADARR_CLIENT_KEY] = radarr_client
     app.bot_data[_QBIT_CLIENT_KEY] = qbit_client
-    app.bot_data[_CONFIRMATION_REGISTRY_KEY] = confirmation_registry
+    app.bot_data[CONFIRMATION_REGISTRY_KEY] = confirmation_registry
 
-    app.bot_data[AGENT_KEY] = Agent(
+    app.bot_data[AGENT_POOL_KEY] = AgentPool(
         identity=identity,
         settings=settings,
         model=settings.claude_model,

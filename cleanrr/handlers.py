@@ -2,22 +2,25 @@ import logging
 import time
 from typing import Any
 
+import httpx
 from telegram import CallbackQuery, Update
 from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 import cleanrr.metrics as metrics
-from cleanrr.agent import Agent
+from cleanrr.agent_pool import AgentPool
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.permissions import CALLBACK_PREFIX
+from cleanrr.permissions import CALLBACK_PREFIX, ConfirmationRegistry
 from cleanrr.tools._user_request import _resolve_user_id
 
 logger = logging.getLogger(__name__)
 
-AGENT_KEY = "agent"
+AGENT_POOL_KEY = "agent_pool"
 IDENTITY_KEY = "identity"
 SETTINGS_KEY = "settings"
+CONFIRMATION_REGISTRY_KEY = "confirmation_registry"
+OVERSEERR_CLIENT_KEY = "overseerr_client"
 
 # Telegram's sendMessage hard cap (core.telegram.org/bots/api#sendmessage):
 # 1-4096 UTF-16 code units. PTB doesn't split or truncate for you.
@@ -53,7 +56,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if update.message is None or update.message.text is None or update.effective_user is None:
         return
 
-    agent: Agent = context.application.bot_data[AGENT_KEY]
+    pool: AgentPool = context.application.bot_data[AGENT_POOL_KEY]
     settings: Settings = context.application.bot_data[SETTINGS_KEY]
     user = update.effective_user
     text = update.message.text
@@ -72,9 +75,14 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     safe_username = "".join(c for c in (user.username or "?") if c.isprintable())[:32]
     logger.info("message from %s (id=%s): %s", safe_username, user.id, text[:80])
 
+    agent = await pool.get_or_create(user.id)
+    if agent is None:
+        await update.message.reply_text("cleanrr's at capacity right now — try again in a bit.")
+        return
+
     start = time.perf_counter()
     try:
-        reply = await agent.respond(telegram_user_id=user.id, prompt=text)
+        reply = await agent.respond(prompt=text)
     except TimeoutError:
         logger.warning("agent.respond timed out after %.0fs", settings.claude_timeout_seconds)
         metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
@@ -123,8 +131,7 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         await update.message.reply_text("Usage: /invite <overseerr_username>")
         return
 
-    agent: Agent = context.application.bot_data[AGENT_KEY]
-    overseerr_client = agent.overseerr_client
+    overseerr_client: httpx.AsyncClient | None = context.application.bot_data[OVERSEERR_CLIENT_KEY]
     if (
         settings.overseerr_url is None
         or settings.overseerr_api_key is None
@@ -189,11 +196,7 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         await _safe_answer(query)
         return
 
-    agent: Agent = context.application.bot_data[AGENT_KEY]
-    registry = agent.confirmation_registry
-    if registry is None:
-        await _safe_answer(query)
-        return
+    registry: ConfirmationRegistry = context.application.bot_data[CONFIRMATION_REGISTRY_KEY]
 
     pending = await registry.get(confirmation_id)
     if pending is None:

@@ -5,10 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cleanrr.agent import Agent
+from cleanrr.agent_pool import AgentPool
 from cleanrr.bot import (
-    _CONFIRMATION_REGISTRY_KEY,
-    _OVERSEERR_CLIENT_KEY,
     _QBIT_CLIENT_KEY,
     _RADARR_CLIENT_KEY,
     _SONARR_CLIENT_KEY,
@@ -19,8 +17,10 @@ from cleanrr.bot import (
 )
 from cleanrr.config import Settings
 from cleanrr.handlers import (
-    AGENT_KEY,
+    AGENT_POOL_KEY,
+    CONFIRMATION_REGISTRY_KEY,
     IDENTITY_KEY,
+    OVERSEERR_CLIENT_KEY,
     SETTINGS_KEY,
     cmd_help,
     cmd_invite,
@@ -50,8 +50,8 @@ def _make_settings(
 async def test_on_shutdown_clears_credentials_even_when_stop_fails(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    agent = MagicMock()
-    agent.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+    pool = MagicMock()
+    pool.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
     identity = MagicMock()
     identity.stop = AsyncMock()
     registry = MagicMock()
@@ -61,10 +61,10 @@ async def test_on_shutdown_clears_credentials_even_when_stop_fails(
 
     app = MagicMock()
     app.bot_data = {
-        AGENT_KEY: agent,
+        AGENT_POOL_KEY: pool,
         IDENTITY_KEY: identity,
-        _CONFIRMATION_REGISTRY_KEY: registry,
-        _OVERSEERR_CLIENT_KEY: overseerr_client,
+        CONFIRMATION_REGISTRY_KEY: registry,
+        OVERSEERR_CLIENT_KEY: overseerr_client,
         _SONARR_CLIENT_KEY: None,
         _RADARR_CLIENT_KEY: None,
         _QBIT_CLIENT_KEY: None,
@@ -91,9 +91,7 @@ def test_configure_logging_silences_httpx() -> None:
 
 
 @pytest.mark.asyncio
-async def test_on_startup_starts_agent_and_identity() -> None:
-    agent = MagicMock()
-    agent.start = AsyncMock()
+async def test_on_startup_starts_identity() -> None:
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=0)
@@ -103,10 +101,9 @@ async def test_on_startup_starts_agent_and_identity() -> None:
 
     app = MagicMock()
     app.bot_data = {
-        AGENT_KEY: agent,
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
-        _CONFIRMATION_REGISTRY_KEY: registry,
+        CONFIRMATION_REGISTRY_KEY: registry,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -114,7 +111,6 @@ async def test_on_startup_starts_agent_and_identity() -> None:
         await _on_startup(app)
 
     registry.start.assert_awaited_once()
-    agent.start.assert_awaited_once()
     identity.start.assert_awaited_once()
     app.bot.set_my_commands.assert_awaited_once()
     mock_metrics_start.assert_not_called()
@@ -122,8 +118,6 @@ async def test_on_startup_starts_agent_and_identity() -> None:
 
 @pytest.mark.asyncio
 async def test_on_startup_starts_metrics_when_enabled() -> None:
-    agent = MagicMock()
-    agent.start = AsyncMock()
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=7)
@@ -133,10 +127,9 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
 
     app = MagicMock()
     app.bot_data = {
-        AGENT_KEY: agent,
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
-        _CONFIRMATION_REGISTRY_KEY: registry,
+        CONFIRMATION_REGISTRY_KEY: registry,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -155,7 +148,7 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
     app = build_application(settings)
 
     assert app.bot_data[SETTINGS_KEY] is settings
-    assert isinstance(app.bot_data[AGENT_KEY], Agent)
+    assert isinstance(app.bot_data[AGENT_POOL_KEY], AgentPool)
     assert isinstance(app.bot_data[IDENTITY_KEY], Identity)
 
     registered = [handler.callback for handler in app.handlers[0]]
