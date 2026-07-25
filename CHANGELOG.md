@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.5.3](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.2...v0.5.3) (2026-07-25)
+
+
+### Bug Fixes
+
+* bound formatter latency, split handlers.py tests ([#71](https://github.com/RayanAlyasi/cleanrr/issues/71)) ([1068214](https://github.com/RayanAlyasi/cleanrr/commit/1068214864739e2f87d9d0724de86bfd4b680b66))
+* bugs found via live deployment test ([#68](https://github.com/RayanAlyasi/cleanrr/issues/68)) ([2d37233](https://github.com/RayanAlyasi/cleanrr/commit/2d3723388908977bcacca1844fe02afc0be61baf))
+* parse single admin Telegram ID from env correctly ([#66](https://github.com/RayanAlyasi/cleanrr/issues/66)) ([777f74b](https://github.com/RayanAlyasi/cleanrr/commit/777f74b9c8fd1a1350d0deb122d8e4d532c426e0))
+* research-grounded audit findings + poster disambiguation ([#69](https://github.com/RayanAlyasi/cleanrr/issues/69)) ([349ddd6](https://github.com/RayanAlyasi/cleanrr/commit/349ddd6d08e6df4d8687899350eb18fcfefdc71e))
+
 ## [0.5.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.1...v0.5.2) (2026-07-23)
 
 
