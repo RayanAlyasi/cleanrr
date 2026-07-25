@@ -149,7 +149,15 @@ def _build_delete_torrent_formatter(
 def _build_force_research_movie_formatter() -> ConfirmationFormatter:
     async def formatter(tool_args: dict[str, Any]) -> str:
         title = str(tool_args.get("title") or "")[:80] or "your movie"
-        return f"Re-search Radarr for '{title}'?"
+        # Unlike remove_my_request/delete_torrent, this can't cheaply verify
+        # the title against Overseerr here (that requires a full fuzzy-match
+        # pass over all the user's requests, not a single lookup-by-id) — the
+        # tool itself does that after confirmation. Say so upfront so a
+        # not-actually-requested title doesn't read as a broken confirmation.
+        return (
+            f"Re-search Radarr for '{title}'? "
+            "(If that's not one of your requests, confirming will just tell you so.)"
+        )
 
     return formatter
 
@@ -157,7 +165,10 @@ def _build_force_research_movie_formatter() -> ConfirmationFormatter:
 def _build_force_research_show_formatter() -> ConfirmationFormatter:
     async def formatter(tool_args: dict[str, Any]) -> str:
         title = str(tool_args.get("title") or "")[:80] or "your show"
-        return f"Re-search Sonarr for '{title}' (whole series)?"
+        return (
+            f"Re-search Sonarr for '{title}' (whole series)? "
+            "(If that's not one of your requests, confirming will just tell you so.)"
+        )
 
     return formatter
 

@@ -623,6 +623,20 @@ async def test_force_research_show_formatter_uses_title() -> None:
 
 
 @pytest.mark.asyncio
+async def test_force_research_formatters_warn_title_may_not_match() -> None:
+    """Regression: the prompt can't cheaply verify the title against
+    Overseerr before confirmation (that's a full fuzzy-match pass, not a
+    lookup-by-id) — must set honest expectations rather than imply success,
+    since a not-actually-requested title still shows "Confirmed." before
+    the tool's own validation reports no match."""
+    formatters = build_confirmation_formatters(None, None, _settings())
+    movie_text = await formatters["force_research_movie"]({"title": "The Flash"})
+    show_text = await formatters["force_research_show"]({"title": "The Flash"})
+    assert "not one of your requests" in movie_text
+    assert "not one of your requests" in show_text
+
+
+@pytest.mark.asyncio
 async def test_force_research_formatters_handle_empty_title() -> None:
     formatters = build_confirmation_formatters(None, None, _settings())
     movie_text = await formatters["force_research_movie"]({"title": ""})
