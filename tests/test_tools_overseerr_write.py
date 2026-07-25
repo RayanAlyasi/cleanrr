@@ -8,7 +8,6 @@ import pytest
 import cleanrr.metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr_write import build_tools
 
 
@@ -85,16 +84,12 @@ async def test_happy_path_deletes_owned_request(
     ]
     mock_client.delete.return_value = _delete_response(204)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     assert len(tools) == 1
     tool_fn = tools[0]
     assert tool_fn.name == "remove_my_request"
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is False
     assert "Dune" in result["content"][0]["text"]
@@ -117,14 +112,10 @@ async def test_happy_path_falls_back_when_media_is_not_a_dict(
     mock_client.get.side_effect = [_user_search_response(user_id=42), weird_media_response]
     mock_client.delete.return_value = _delete_response(204)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is False
     assert "Unknown" in result["content"][0]["text"]
@@ -155,14 +146,10 @@ async def test_happy_path_resolves_title_from_real_overseerr_shape(
     ]
     mock_client.delete.return_value = _delete_response(204)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is False
     assert "Project Runway" in result["content"][0]["text"]
@@ -174,14 +161,10 @@ async def test_unlinked_user_returns_error_without_http_calls(
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert "link" in result["content"][0]["text"].lower()
     mock_client.get.assert_not_called()
@@ -201,14 +184,10 @@ async def test_ownership_mismatch_increments_unauthorized_metric_and_skips_delet
         _request_get_response(owner_id=99, title="Someone else's"),
     ]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "not your" in result["content"][0]["text"].lower()
@@ -229,14 +208,10 @@ async def test_get_404_is_idempotent_success(
         _request_get_response(status_code=404),
     ]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is False
     assert "already removed" in result["content"][0]["text"].lower()
@@ -254,14 +229,10 @@ async def test_delete_404_is_idempotent_success(
     ]
     mock_client.delete.return_value = _delete_response(404)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is False
     assert "already removed" in result["content"][0]["text"].lower()
@@ -278,14 +249,10 @@ async def test_delete_500_returns_error(
     ]
     mock_client.delete.return_value = _delete_response(500)
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "500" in result["content"][0]["text"]
@@ -296,14 +263,10 @@ async def test_not_configured_when_overseerr_missing(
     mock_identity: MagicMock, mock_client: AsyncMock
 ) -> None:
     unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
-    tools = build_tools(mock_client, mock_identity, unconfigured)
+    tools = build_tools(mock_client, mock_identity, unconfigured, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "configured" in result["content"][0]["text"].lower()
@@ -313,14 +276,10 @@ async def test_not_configured_when_overseerr_missing(
 async def test_bad_request_id_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": -1})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": -1})
 
     assert result["is_error"] is True
     mock_client.get.assert_not_called()
@@ -335,14 +294,10 @@ async def test_user_resolve_404_returns_friendly_error(
     user_search_404.status_code = 404
     mock_client.get.return_value = user_search_404
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert "couldn't find" in result["content"][0]["text"].lower()
     mock_client.delete.assert_not_called()
@@ -357,14 +312,10 @@ async def test_user_resolve_5xx_returns_error(
     user_search_500.status_code = 500
     mock_client.get.return_value = user_search_500
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     mock_client.delete.assert_not_called()
@@ -380,14 +331,10 @@ async def test_get_http_error_returns_friendly_message(
         httpx.RequestError("boom"),
     ]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     mock_client.delete.assert_not_called()
@@ -402,14 +349,10 @@ async def test_get_5xx_returns_error(
     bad_resp.status_code = 500
     mock_client.get.side_effect = [_user_search_response(user_id=42), bad_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "500" in result["content"][0]["text"]
@@ -425,14 +368,10 @@ async def test_get_malformed_json_returns_error(
     bad_json.json.side_effect = ValueError("bad json")
     mock_client.get.side_effect = [_user_search_response(user_id=42), bad_json]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "format" in result["content"][0]["text"].lower()
@@ -448,14 +387,10 @@ async def test_get_non_dict_json_returns_error(
     non_dict_json.json.return_value = ["not", "a", "dict"]
     mock_client.get.side_effect = [_user_search_response(user_id=42), non_dict_json]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
     assert "format" in result["content"][0]["text"].lower()
@@ -473,27 +408,9 @@ async def test_delete_http_error_returns_friendly_message(
     ]
     mock_client.delete.side_effect = httpx.RequestError("boom")
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"request_id": 7})
-    finally:
-        current_telegram_user_id.reset(token)
-
-    assert result["is_error"] is True
-
-
-@pytest.mark.asyncio
-async def test_missing_contextvar_returns_internal_error(
-    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
-) -> None:
-    tools = build_tools(mock_client, mock_identity, settings)
-    tool_fn = tools[0]
-    # Don't set the contextvar — simulate the tool firing outside a request scope.
     result = await tool_fn.handler({"request_id": 7})
 
     assert result["is_error"] is True
-    assert "internal error" in result["content"][0]["text"].lower()
-    mock_client.get.assert_not_called()

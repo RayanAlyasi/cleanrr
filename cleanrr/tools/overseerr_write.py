@@ -11,7 +11,6 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 from cleanrr.tools._user_request import _fetch_media_title, _resolve_user_id
 
@@ -19,7 +18,7 @@ logger = logging.getLogger(__name__)
 
 
 def build_tools(
-    client: httpx.AsyncClient, identity: Identity, settings: Settings
+    client: httpx.AsyncClient, identity: Identity, settings: Settings, *, telegram_user_id: int
 ) -> list[SdkMcpTool]:
     """Factory for destructive Overseerr tools.
 
@@ -49,15 +48,6 @@ def build_tools(
         if not isinstance(request_id, int) or request_id <= 0:
             metrics.tool_calls_total.labels(tool="remove_my_request", status="bad_args").inc()
             return text_result("Bad request id.", is_error=True)
-
-        try:
-            telegram_user_id = current_telegram_user_id.get()
-        except LookupError:
-            logger.exception("ContextVar not set in remove_my_request")
-            metrics.tool_calls_total.labels(
-                tool="remove_my_request", status="context_missing"
-            ).inc()
-            return text_result("Internal error — couldn't identify caller.", is_error=True)
 
         overseerr_username = await identity.get_link(telegram_user_id)
         if overseerr_username is None:

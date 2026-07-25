@@ -12,7 +12,6 @@ from telegram.error import TelegramError
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._results import text_result
 
 if TYPE_CHECKING:
@@ -139,7 +138,6 @@ class UserRequestLookup:
     status: Literal[
         "ok",
         "not_configured",
-        "context_missing",
         "unlinked_user",
         "empty_input",
         "user_not_found",
@@ -288,6 +286,7 @@ async def find_user_request(
     settings: Settings,
     title: str,
     *,
+    telegram_user_id: int,
     telegram_bot: telegram.Bot | None = None,
 ) -> UserRequestLookup:
     """Cross-reference telegram user → Overseerr request matching title.
@@ -303,12 +302,6 @@ async def find_user_request(
         or settings.overseerr_api_key is None
     ):
         return UserRequestLookup(status="not_configured")
-
-    try:
-        telegram_user_id = current_telegram_user_id.get()
-    except LookupError:
-        logger.exception("ContextVar not set in tool")
-        return UserRequestLookup(status="context_missing")
 
     overseerr_username = await identity.get_link(telegram_user_id)
     if overseerr_username is None:
@@ -390,8 +383,6 @@ def render_lookup_error(lookup: UserRequestLookup, title_input: str) -> dict[str
             "OVERSEERR_URL and OVERSEERR_API_KEY.",
             is_error=True,
         )
-    if lookup.status == "context_missing":
-        return text_result("Internal error — couldn't identify caller.", is_error=True)
     if lookup.status == "unlinked_user":
         return text_result(
             "You haven't linked your Overseerr account yet. Send /link <code> "

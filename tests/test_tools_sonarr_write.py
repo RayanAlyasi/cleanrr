@@ -7,7 +7,6 @@ import pytest
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.sonarr_write import build_tools
 
 
@@ -88,16 +87,12 @@ async def test_happy_path_triggers_series_search(
     mock_sonarr.get.return_value = _sonarr_series(series_id=77, title="The Bear")
     mock_sonarr.post.return_value = _sonarr_command_ok()
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     assert len(tools) == 1
     tool_fn = tools[0]
     assert tool_fn.name == "force_research_show"
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is False
     assert "The Bear" in result["content"][0]["text"]
@@ -110,14 +105,12 @@ async def test_not_configured_when_sonarr_missing(
     mock_identity: MagicMock, mock_sonarr: AsyncMock, mock_overseerr: AsyncMock
 ) -> None:
     unconfigured = _settings(sonarr_url=None, sonarr_api_key=None)
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, unconfigured)
+    tools = build_tools(
+        mock_sonarr, mock_overseerr, mock_identity, unconfigured, telegram_user_id=123
+    )
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
     mock_sonarr.post.assert_not_called()
@@ -138,14 +131,10 @@ async def test_movie_passed_in_returns_friendly_error(
     }
     mock_overseerr.get.side_effect = [_overseerr_user_resolve(), movie_request]
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})
 
     assert "movie" in result["content"][0]["text"].lower()
     mock_sonarr.post.assert_not_called()
@@ -164,14 +153,10 @@ async def test_show_not_in_sonarr_yet(
     empty.json.return_value = []
     mock_sonarr.get.return_value = empty
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert "hasn't picked it up" in result["content"][0]["text"].lower()
     mock_sonarr.post.assert_not_called()
@@ -189,14 +174,10 @@ async def test_sonarr_series_lookup_5xx(
     bad.status_code = 500
     mock_sonarr.get.return_value = bad
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
 
@@ -211,14 +192,10 @@ async def test_sonarr_series_lookup_network_error(
     mock_overseerr.get.side_effect = [_overseerr_user_resolve(), _overseerr_show_requests()]
     mock_sonarr.get.side_effect = httpx.RequestError("boom")
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
 
@@ -236,14 +213,10 @@ async def test_sonarr_command_5xx(
     bad.status_code = 500
     mock_sonarr.post.return_value = bad
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
     assert "500" in result["content"][0]["text"]
@@ -262,14 +235,10 @@ async def test_sonarr_series_lookup_malformed_json(
     bad.json.side_effect = ValueError("bad json")
     mock_sonarr.get.return_value = bad
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
 
@@ -287,14 +256,10 @@ async def test_sonarr_series_lookup_missing_series_id(
     weird.json.return_value = [{"title": "The Bear"}]  # no id field
     mock_sonarr.get.return_value = weird
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
     mock_sonarr.post.assert_not_called()
@@ -311,14 +276,10 @@ async def test_sonarr_command_network_error(
     mock_sonarr.get.return_value = _sonarr_series()
     mock_sonarr.post.side_effect = httpx.RequestError("boom")
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
 
@@ -336,14 +297,10 @@ async def test_sonarr_lookup_first_entry_not_dict(
     weird.json.return_value = ["not a dict"]
     mock_sonarr.get.return_value = weird
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert result["is_error"] is True
 
@@ -357,14 +314,10 @@ async def test_unlinked_user_returns_error_without_sonarr_calls(
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
 
-    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings)
+    tools = build_tools(mock_sonarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"title": "The Bear"})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "The Bear"})
 
     assert "link" in result["content"][0]["text"].lower()
     mock_sonarr.post.assert_not_called()

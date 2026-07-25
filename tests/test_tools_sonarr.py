@@ -7,7 +7,6 @@ import pytest
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.sonarr import build_tools
 
 
@@ -52,7 +51,9 @@ async def test_get_show_status_sonarr_not_configured(
     mock_identity: MagicMock,
 ) -> None:
     settings = _settings(sonarr_url=None, sonarr_api_key=None)
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
     result = await get_show_status.handler({"title": "The Bear"})
@@ -81,15 +82,13 @@ async def test_get_show_status_not_a_show(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Dune"})
-        assert "movie" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Dune"})
+    assert "movie" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -120,15 +119,13 @@ async def test_get_show_status_not_in_sonarr(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.return_value = series_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "hasn't picked it up" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "hasn't picked it up" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -173,15 +170,13 @@ async def test_get_show_status_all_downloaded(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Breaking Bad"})
-        assert "All 62 episodes" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Breaking Bad"})
+    assert "All 62 episodes" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -222,20 +217,18 @@ async def test_get_show_status_partial_with_queue(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "22 of 30 episodes ready, 2 downloading" in result["content"][0]["text"]
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "22 of 30 episodes ready, 2 downloading" in result["content"][0]["text"]
 
-        # Regression: Sonarr's queue endpoint only filters on the plural,
-        # array-bound "seriesIds" — "seriesId" is silently ignored server-side.
-        queue_call = mock_sonarr_client.get.call_args_list[1]
-        assert queue_call.kwargs["params"]["seriesIds"] == [2]
-    finally:
-        current_telegram_user_id.reset(token)
+    # Regression: Sonarr's queue endpoint only filters on the plural,
+    # array-bound "seriesIds" — "seriesId" is silently ignored server-side.
+    queue_call = mock_sonarr_client.get.call_args_list[1]
+    assert queue_call.kwargs["params"]["seriesIds"] == [2]
 
 
 @pytest.mark.asyncio
@@ -276,15 +269,13 @@ async def test_get_show_status_nothing_yet(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "New Show"})
-        assert "nothing downloaded yet" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "New Show"})
+    assert "nothing downloaded yet" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -325,15 +316,13 @@ async def test_get_show_status_partial_no_queue(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Severance"})
-        assert "15 of 25 episodes ready" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Severance"})
+    assert "15 of 25 episodes ready" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -377,15 +366,13 @@ async def test_get_show_status_queue_fetch_fails_still_returns_series(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Fallback Test"})
-        assert "10 of 20 episodes ready" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Fallback Test"})
+    assert "10 of 20 episodes ready" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -430,15 +417,13 @@ async def test_get_show_status_queue_malformed_json_still_returns_series(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Fallback Test"})
-        assert "10 of 20 episodes ready" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Fallback Test"})
+    assert "10 of 20 episodes ready" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -479,15 +464,13 @@ async def test_get_show_status_queue_fetch_raises_still_returns_series(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, httpx.ConnectError("boom")]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Fallback Test"})
-        assert "10 of 20 episodes ready" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Fallback Test"})
+    assert "10 of 20 episodes ready" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -497,26 +480,14 @@ async def test_get_show_status_overseerr_not_configured(
     mock_identity: MagicMock,
 ) -> None:
     settings = _settings(overseerr_url=None, overseerr_api_key=None)
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
     result = await get_show_status.handler({"title": "The Bear"})
     assert result["is_error"] is True
     assert "Overseerr isn't configured" in result["content"][0]["text"]
-
-
-@pytest.mark.asyncio
-async def test_get_show_status_context_missing(
-    mock_sonarr_client: AsyncMock,
-    mock_overseerr_client: AsyncMock,
-    mock_identity: MagicMock,
-    settings: Settings,
-) -> None:
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
-    get_show_status = tools[0]
-    result = await get_show_status.handler({"title": "The Bear"})
-    assert result["is_error"] is True
-    assert "Internal error" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -527,15 +498,13 @@ async def test_get_show_status_unlinked_user(
     settings: Settings,
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "linked your Overseerr account" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "linked your Overseerr account" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -546,15 +515,13 @@ async def test_get_show_status_empty_input(
     settings: Settings,
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value="alice")
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "  "})
-        assert "which title" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "  "})
+    assert "which title" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -569,15 +536,13 @@ async def test_get_show_status_user_not_found(
     user_resp.status_code = 404
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "Couldn't find your Overseerr account" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "Couldn't find your Overseerr account" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -592,15 +557,13 @@ async def test_get_show_status_overseerr_http_error(
     user_resp.status_code = 500
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "Couldn't reach Overseerr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "Couldn't reach Overseerr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -616,15 +579,13 @@ async def test_get_show_status_overseerr_parse_error(
     user_resp.json.side_effect = ValueError("bad json")
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert "Unexpected response format from Overseerr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert "Unexpected response format from Overseerr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -650,15 +611,13 @@ async def test_get_show_status_no_match(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Completely Different Show"})
-        assert "couldn't find a request" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Completely Different Show"})
+    assert "couldn't find a request" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -693,18 +652,16 @@ async def test_get_show_status_multi_match(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "Dune"})
-        text = result["content"][0]["text"]
-        assert "possible matches" in text
-        assert "Dune Part One" in text
-        assert "Dune Part Two" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "Dune"})
+    text = result["content"][0]["text"]
+    assert "possible matches" in text
+    assert "Dune Part One" in text
+    assert "Dune Part Two" in text
 
 
 @pytest.mark.asyncio
@@ -734,16 +691,14 @@ async def test_get_show_status_series_http_error(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.return_value = series_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert result["is_error"] is True
-        assert "Couldn't reach Sonarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Couldn't reach Sonarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -774,16 +729,14 @@ async def test_get_show_status_series_parse_error(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.return_value = series_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -814,16 +767,14 @@ async def test_get_show_status_series_not_dict(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.return_value = series_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -854,16 +805,14 @@ async def test_get_show_status_series_missing_id(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.return_value = series_resp
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Sonarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -890,13 +839,11 @@ async def test_get_show_status_sonarr_http_exception(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = httpx.ConnectError("connection refused")
 
-    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_show_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_show_status.handler({"title": "The Bear"})
-        assert result["is_error"] is True
-        assert "error occurred" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_show_status.handler({"title": "The Bear"})
+    assert result["is_error"] is True
+    assert "error occurred" in result["content"][0]["text"]

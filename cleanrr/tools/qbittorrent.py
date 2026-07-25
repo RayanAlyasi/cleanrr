@@ -9,7 +9,6 @@ from claude_agent_sdk import SdkMcpTool, tool
 
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._qbittorrent_auth import QbitAuthError, fetch_torrents, login
 from cleanrr.tools._results import text_result
 
@@ -32,7 +31,9 @@ def _format_age(ts: int) -> str:
     return f"{elapsed // 86400}d"
 
 
-def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkMcpTool]:
+def build_tools(
+    qbit_client: httpx.AsyncClient, settings: Settings, *, telegram_user_id: int
+) -> list[SdkMcpTool]:
     """Factory for qBittorrent tools."""
 
     @tool(
@@ -56,15 +57,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
                 is_error=True,
             )
 
-        try:
-            caller_id = current_telegram_user_id.get()
-        except LookupError:
-            metrics.tool_calls_total.labels(
-                tool="list_stalled_torrents", status="context_missing"
-            ).inc()
-            return text_result("Internal error — user context unavailable.", is_error=True)
-
-        if caller_id not in settings.admin_telegram_ids:
+        if telegram_user_id not in settings.admin_telegram_ids:
             metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="not_admin").inc()
             return text_result("Only the admin can check stalled torrents.", is_error=False)
 

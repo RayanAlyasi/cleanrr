@@ -8,8 +8,10 @@ import pytest
 from cleanrr import metrics
 from cleanrr.config import Settings
 from cleanrr.handlers import (
-    AGENT_KEY,
+    AGENT_POOL_KEY,
+    CONFIRMATION_REGISTRY_KEY,
     IDENTITY_KEY,
+    OVERSEERR_CLIENT_KEY,
     SETTINGS_KEY,
     cmd_help,
     cmd_invite,
@@ -58,13 +60,34 @@ def _make_update(text: str, user_id: int = 1) -> MagicMock:
     return update
 
 
+def _make_pool(agent: MagicMock | None) -> MagicMock:
+    """A pool double whose get_or_create resolves to agent (or None for
+    the at-capacity path)."""
+    pool = MagicMock()
+    pool.get_or_create = AsyncMock(return_value=agent)
+    return pool
+
+
 def _make_context(
-    agent: MagicMock,
     settings: Settings,
+    *,
+    pool: MagicMock | None = None,
     identity: MagicMock | None = None,
+    overseerr_client: MagicMock | None = None,
+    confirmation_registry: ConfirmationRegistry | MagicMock | None = None,
 ) -> MagicMock:
     context = MagicMock()
-    bot_data: dict[str, object] = {AGENT_KEY: agent, SETTINGS_KEY: settings}
+    # OVERSEERR_CLIENT_KEY and CONFIRMATION_REGISTRY_KEY are always present in
+    # real bot_data (build_application sets them unconditionally, sometimes to
+    # None) — set them unconditionally here too so cmd_invite/on_confirmation
+    # never hit a KeyError from an incomplete test double.
+    bot_data: dict[str, object] = {
+        SETTINGS_KEY: settings,
+        OVERSEERR_CLIENT_KEY: overseerr_client,
+        CONFIRMATION_REGISTRY_KEY: confirmation_registry,
+    }
+    if pool is not None:
+        bot_data[AGENT_POOL_KEY] = pool
     if identity is not None:
         bot_data[IDENTITY_KEY] = identity
     context.application.bot_data = bot_data
@@ -86,7 +109,7 @@ async def test_on_message_rejects_overlong_message() -> None:
     agent = MagicMock()
     agent.respond = AsyncMock()
     update = _make_update("x" * 11)
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     before = _counter_value({"status": "rejected_too_long"})
 
@@ -105,7 +128,7 @@ async def test_on_message_handles_timeout() -> None:
     agent = MagicMock()
     agent.respond = AsyncMock(side_effect=TimeoutError())
     update = _make_update("hello")
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     before = _counter_value({"status": "timeout"})
 
@@ -123,7 +146,7 @@ async def test_on_message_handles_generic_error() -> None:
     agent = MagicMock()
     agent.respond = AsyncMock(side_effect=RuntimeError("boom"))
     update = _make_update("hello")
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     before = _counter_value({"status": "error"})
 
@@ -141,15 +164,31 @@ async def test_on_message_success_path() -> None:
     agent = MagicMock()
     agent.respond = AsyncMock(return_value="hi back")
     update = _make_update("hello")
-    context = _make_context(agent, settings)
+    pool = _make_pool(agent)
+    context = _make_context(settings, pool=pool)
 
     before = _counter_value({"status": "success"})
 
     await on_message(update, context)
 
-    agent.respond.assert_awaited_once_with(telegram_user_id=1, prompt="hello")
+    pool.get_or_create.assert_awaited_once_with(1)
+    agent.respond.assert_awaited_once_with(prompt="hello")
     update.message.reply_text.assert_awaited_once_with("hi back")
     assert _counter_value({"status": "success"}) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_on_message_replies_at_capacity_when_pool_full() -> None:
+    """A brand-new user hitting the pool's hard cap must get a friendly
+    reply, not a crash or a silently dropped message."""
+    settings = _make_settings()
+    update = _make_update("hello")
+    context = _make_context(settings, pool=_make_pool(None))
+
+    await on_message(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "capacity" in reply.lower()
 
 
 @pytest.mark.asyncio
@@ -161,7 +200,7 @@ async def test_on_message_truncates_reply_over_telegram_limit() -> None:
     agent = MagicMock()
     agent.respond = AsyncMock(return_value="x" * 5000)
     update = _make_update("hello")
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     await on_message(update, context)
 
@@ -181,7 +220,7 @@ async def test_on_message_handles_delivery_failure() -> None:
     agent.respond = AsyncMock(return_value="hi back")
     update = _make_update("hello")
     update.message.reply_text = AsyncMock(side_effect=Forbidden("bot blocked"))
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     before_success = _counter_value({"status": "success"})
     before_failed = _counter_value({"status": "delivery_failed"})
@@ -200,7 +239,7 @@ async def test_on_message_returns_when_message_is_none() -> None:
     update = MagicMock()
     update.message = None
     update.effective_user = MagicMock()
-    context = _make_context(agent, settings)
+    context = _make_context(settings, pool=_make_pool(agent))
 
     await on_message(update, context)
 
@@ -217,7 +256,7 @@ async def test_cmd_invite_no_message() -> None:
     update = MagicMock()
     update.message = None
     update.effective_user = MagicMock()
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_invite(update, context)
 
@@ -230,7 +269,7 @@ async def test_cmd_invite_no_effective_user() -> None:
     update.message = MagicMock()
     update.message.reply_text = AsyncMock()
     update.effective_user = None
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_invite(update, context)
 
@@ -241,7 +280,7 @@ async def test_cmd_invite_no_effective_user() -> None:
 async def test_cmd_invite_disabled_when_no_admin_ids() -> None:
     settings = _make_settings(admin_ids=set())
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings)
+    context = _make_context(settings)
 
     await cmd_invite(update, context)
 
@@ -256,7 +295,7 @@ async def test_cmd_invite_rejects_non_admin_caller() -> None:
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="XYZ")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings, identity=identity)
+    context = _make_context(settings, identity=identity)
 
     await cmd_invite(update, context)
 
@@ -271,7 +310,7 @@ async def test_cmd_invite_rejects_missing_args() -> None:
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings, identity=identity)
+    context = _make_context(settings, identity=identity)
     context.args = []
 
     await cmd_invite(update, context)
@@ -287,7 +326,7 @@ async def test_cmd_invite_rejects_too_many_args() -> None:
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings, identity=identity)
+    context = _make_context(settings, identity=identity)
     context.args = ["a", "b"]
 
     await cmd_invite(update, context)
@@ -303,7 +342,7 @@ async def test_cmd_invite_rejects_when_overseerr_not_configured() -> None:
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), settings, identity=identity)
+    context = _make_context(settings, identity=identity)
     context.args = ["alice"]
 
     await cmd_invite(update, context)
@@ -318,10 +357,8 @@ async def test_cmd_invite_rejects_unknown_overseerr_user() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
-    agent = MagicMock()
-    agent.overseerr_client = MagicMock()
     update = _make_update("", user_id=1)
-    context = _make_context(agent, settings, identity=identity)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
     context.args = ["nosuchuser"]
 
     with patch(
@@ -340,10 +377,8 @@ async def test_cmd_invite_reports_overseerr_unreachable() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
-    agent = MagicMock()
-    agent.overseerr_client = MagicMock()
     update = _make_update("", user_id=1)
-    context = _make_context(agent, settings, identity=identity)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
     context.args = ["alice"]
 
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "http_error"))):
@@ -359,10 +394,8 @@ async def test_cmd_invite_reports_overseerr_parse_error() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
-    agent = MagicMock()
-    agent.overseerr_client = MagicMock()
     update = _make_update("", user_id=1)
-    context = _make_context(agent, settings, identity=identity)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
     context.args = ["alice"]
 
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "parse_error"))):
@@ -378,10 +411,8 @@ async def test_cmd_invite_strips_leading_at_sign() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
-    agent = MagicMock()
-    agent.overseerr_client = MagicMock()
     update = _make_update("", user_id=1)
-    context = _make_context(agent, settings, identity=identity)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
     context.args = ["@bob"]
 
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
@@ -395,10 +426,8 @@ async def test_cmd_invite_happy_path() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
     identity.issue_code = AsyncMock(return_value="ABC123")
-    agent = MagicMock()
-    agent.overseerr_client = MagicMock()
     update = _make_update("", user_id=1)
-    context = _make_context(agent, settings, identity=identity)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
     context.args = ["alice"]
 
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
@@ -420,7 +449,7 @@ async def test_cmd_link_no_message() -> None:
     update = MagicMock()
     update.message = None
     update.effective_user = MagicMock()
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_link(update, context)
 
@@ -430,7 +459,7 @@ async def test_cmd_link_rejects_missing_args() -> None:
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value=None)
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings(), identity=identity)
+    context = _make_context(_make_settings(), identity=identity)
     context.args = []
 
     await cmd_link(update, context)
@@ -445,7 +474,7 @@ async def test_cmd_link_uppercases_code() -> None:
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value="alice")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings(), identity=identity)
+    context = _make_context(_make_settings(), identity=identity)
     context.args = ["abc"]
 
     await cmd_link(update, context)
@@ -458,7 +487,7 @@ async def test_cmd_link_invalid_code() -> None:
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value=None)
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings(), identity=identity)
+    context = _make_context(_make_settings(), identity=identity)
     context.args = ["BADCODE"]
 
     await cmd_link(update, context)
@@ -472,7 +501,7 @@ async def test_cmd_link_happy_path() -> None:
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value="alice")
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings(), identity=identity)
+    context = _make_context(_make_settings(), identity=identity)
     context.args = ["VALIDCODE"]
 
     await cmd_link(update, context)
@@ -490,7 +519,7 @@ async def test_cmd_link_happy_path() -> None:
 async def test_cmd_start_no_message() -> None:
     update = MagicMock()
     update.message = None
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_start(update, context)
 
@@ -498,7 +527,7 @@ async def test_cmd_start_no_message() -> None:
 @pytest.mark.asyncio
 async def test_cmd_start_happy_path() -> None:
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     before = metrics.telegram_messages_total.labels(kind="command", command="start")._value.get()
 
@@ -521,7 +550,7 @@ async def test_cmd_start_happy_path() -> None:
 async def test_cmd_help_no_message() -> None:
     update = MagicMock()
     update.message = None
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_help(update, context)
 
@@ -529,7 +558,7 @@ async def test_cmd_help_no_message() -> None:
 @pytest.mark.asyncio
 async def test_cmd_help_lists_commands() -> None:
     update = _make_update("", user_id=1)
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await cmd_help(update, context)
 
@@ -560,7 +589,7 @@ def _make_callback_update(callback_data: str, user_id: int = 42) -> tuple[MagicM
 async def test_on_confirmation_returns_when_no_callback_query() -> None:
     update = MagicMock()
     update.callback_query = None
-    context = _make_context(MagicMock(), _make_settings())
+    context = _make_context(_make_settings())
 
     await on_confirmation(update, context)  # must not raise
 
@@ -578,9 +607,7 @@ async def test_on_confirmation_ignores_unknown_decision() -> None:
         prompt_message_id=1,
     )
 
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:maybe", user_id=42)
     await on_confirmation(update, context)
@@ -595,9 +622,7 @@ async def test_on_confirmation_expired_id_survives_edit_failure() -> None:
     original message is gone (deleted, too old), editing it must not crash
     the handler."""
     registry = ConfirmationRegistry(ttl_seconds=60)
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, _ = _make_callback_update("cleanrr:confirm:doesnotexist:yes", user_id=42)
     update.callback_query.edit_message_text = AsyncMock(side_effect=RuntimeError("gone"))
@@ -618,9 +643,7 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
         prompt_message_id=1,
     )
 
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
     await on_confirmation(update, context)
@@ -647,9 +670,7 @@ async def test_on_confirmation_survives_stale_callback_query() -> None:
         prompt_message_id=1,
     )
 
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
     answer.side_effect = BadRequest("Query is too old and response timeout expired")
@@ -672,9 +693,7 @@ async def test_on_confirmation_rejects_wrong_user() -> None:
         prompt_message_id=1,
     )
 
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, _ = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=999)
     await on_confirmation(update, context)
@@ -690,9 +709,7 @@ async def test_on_confirmation_rejects_wrong_user() -> None:
 @pytest.mark.asyncio
 async def test_on_confirmation_handles_expired_id() -> None:
     registry = ConfirmationRegistry(ttl_seconds=60)
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, _ = _make_callback_update("cleanrr:confirm:doesnotexist:yes", user_id=42)
     await on_confirmation(update, context)
@@ -703,23 +720,9 @@ async def test_on_confirmation_handles_expired_id() -> None:
 @pytest.mark.asyncio
 async def test_on_confirmation_ignores_malformed_callback_data() -> None:
     registry = ConfirmationRegistry(ttl_seconds=60)
-    agent = MagicMock()
-    agent.confirmation_registry = registry
-    context = _make_context(agent, _make_settings())
+    context = _make_context(_make_settings(), confirmation_registry=registry)
 
     update, _ = _make_callback_update("garbage:wrong:format", user_id=42)
-    await on_confirmation(update, context)
-
-    update.callback_query.edit_message_text.assert_not_awaited()
-
-
-@pytest.mark.asyncio
-async def test_on_confirmation_no_op_when_registry_unavailable() -> None:
-    agent = MagicMock()
-    agent.confirmation_registry = None
-    context = _make_context(agent, _make_settings())
-
-    update, _ = _make_callback_update("cleanrr:confirm:abc:yes", user_id=42)
     await on_confirmation(update, context)
 
     update.callback_query.edit_message_text.assert_not_awaited()

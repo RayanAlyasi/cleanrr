@@ -19,7 +19,6 @@ from cleanrr.bot import (
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import ConfirmationRegistry
-from cleanrr.tools._context import current_telegram_user_id
 
 
 @pytest.fixture()
@@ -75,7 +74,7 @@ def _collect_allowed_tools(settings: Settings, *, telegram_bot: Any = None) -> l
     async def _run() -> list[str]:
         agent = _make_agent(settings, telegram_bot=telegram_bot)
         with patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient):
-            await agent.start()
+            await agent.start(1)
             await agent.stop()
         opts = captured["options"]
         return list(opts.allowed_tools)  # type: ignore[union-attr]
@@ -107,7 +106,7 @@ def _collect_registered_tool_names(settings: Settings, *, telegram_bot: Any = No
             patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient),
             patch("cleanrr.agent.create_sdk_mcp_server", _fake_create_sdk_mcp_server),
         ):
-            await agent.start()
+            await agent.start(1)
             await agent.stop()
         return [t.name for t in captured["tools"]]  # type: ignore[union-attr]
 
@@ -140,7 +139,7 @@ async def test_start_wires_mcp_when_overseerr_configured(monkeypatch: pytest.Mon
         overseerr_api_key=SecretStr("ov-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "cleanrr" in opts.mcp_servers  # type: ignore[union-attr]
@@ -178,8 +177,8 @@ async def test_start_twice_is_a_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     )
     agent = _make_agent(settings)
 
-    await agent.start()
-    await agent.start()
+    await agent.start(1)
+    await agent.start(1)
 
     assert init_count == 1
     await agent.stop()
@@ -203,7 +202,7 @@ async def test_respond_before_start_raises() -> None:
     agent = _make_agent(settings)
 
     with pytest.raises(RuntimeError, match=r"Agent\.start"):
-        await agent.respond(telegram_user_id=1, prompt="hello")
+        await agent.respond(prompt="hello")
 
 
 @pytest.mark.asyncio
@@ -231,7 +230,7 @@ async def test_start_with_no_overseerr_config_registers_no_tools(
         telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert opts.allowed_tools == []  # type: ignore[union-attr]
@@ -270,7 +269,7 @@ async def test_start_registers_sonarr_tools_when_both_configured(
         sonarr_api_key=SecretStr("sonarr-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "get_show_status" in opts.allowed_tools  # type: ignore[union-attr]
@@ -306,7 +305,7 @@ async def test_start_skips_sonarr_tools_when_overseerr_missing(
         sonarr_api_key=SecretStr("sonarr-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "get_show_status" not in opts.allowed_tools  # type: ignore[union-attr]
@@ -344,7 +343,7 @@ async def test_start_registers_radarr_tools_when_both_configured(
         radarr_api_key=SecretStr("radarr-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "get_movie_status" in opts.allowed_tools  # type: ignore[union-attr]
@@ -380,7 +379,7 @@ async def test_start_skips_radarr_tools_when_overseerr_missing(
         radarr_api_key=SecretStr("radarr-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "get_movie_status" not in opts.allowed_tools  # type: ignore[union-attr]
@@ -440,9 +439,10 @@ async def test_respond_raises_timeout_when_sdk_hangs() -> None:
     mock_client.receive_response = lambda: _slow_generator()
 
     agent._client = mock_client
+    agent._telegram_user_id = 1
 
     with pytest.raises(TimeoutError):
-        await agent.respond(telegram_user_id=1, prompt="hello")
+        await agent.respond(prompt="hello")
 
 
 @pytest.mark.asyncio
@@ -459,8 +459,9 @@ async def test_respond_returns_normally_when_under_timeout() -> None:
     mock_client.receive_response = lambda: _fast_generator("hello back")
 
     agent._client = mock_client
+    agent._telegram_user_id = 1
 
-    result = await agent.respond(telegram_user_id=1, prompt="hello")
+    result = await agent.respond(prompt="hello")
 
     assert result == "hello back"
 
@@ -494,7 +495,7 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
     )
     bot = MagicMock()
     agent = _make_agent(settings, telegram_bot=bot)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     # can_use_tool replaces permission_mode in production wiring
@@ -579,7 +580,7 @@ async def test_start_skips_write_tools_when_no_telegram_bot(
         overseerr_api_key=SecretStr("ov-key"),
     )
     agent = _make_agent(settings)
-    await agent.start()
+    await agent.start(1)
 
     opts = captured_options["options"]
     assert "remove_my_request" not in opts.allowed_tools  # type: ignore[union-attr]
@@ -615,69 +616,17 @@ async def test_lock_releases_after_timeout() -> None:
     mock_client.receive_response = _slow_then_fast
 
     agent._client = mock_client
+    agent._telegram_user_id = 1
 
     with pytest.raises(TimeoutError):
-        await agent.respond(telegram_user_id=1, prompt="first")
+        await agent.respond(prompt="first")
 
     # After the timeout the lock must be released; second call must complete quickly.
     result = await asyncio.wait_for(
-        agent.respond(telegram_user_id=1, prompt="second"),
+        agent.respond(prompt="second"),
         timeout=5.0,
     )
     assert result == "second call"
-
-
-@pytest.mark.asyncio
-async def test_context_user_id_not_clobbered_by_concurrent_respond() -> None:
-    """Regression: current_telegram_user_id must only change once a respond()
-    call actually holds the lock. With concurrent_updates(True) enabled bot-
-    wide, a second user's respond() starts running immediately while a first
-    query is still in flight — if set() ran before lock acquisition, the
-    second call would clobber the value the first query's tool calls rely on.
-    """
-    agent = Agent(
-        identity=MagicMock(spec=Identity),
-        settings=Settings(
-            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
-        ),
-        timeout_seconds=5.0,
-    )
-    mock_client = AsyncMock()
-    mock_client.query = AsyncMock()
-
-    observed_during_first: int | None = None
-
-    async def _first_generator() -> AsyncIterator[AssistantMessage]:
-        nonlocal observed_during_first
-        # Real delay so the second respond() call gets scheduled and, under
-        # the bug, sets current_telegram_user_id before this query finishes.
-        await asyncio.sleep(0.05)
-        observed_during_first = current_telegram_user_id.get()
-        yield _make_text_message("first done")
-
-    async def _second_generator() -> AsyncIterator[AssistantMessage]:
-        yield _make_text_message("second done")
-
-    call_count = 0
-
-    def _receive_response() -> AsyncIterator[AssistantMessage]:
-        nonlocal call_count
-        call_count += 1
-        return _first_generator() if call_count == 1 else _second_generator()
-
-    mock_client.receive_response = _receive_response
-    agent._client = mock_client
-
-    first_task = asyncio.create_task(agent.respond(telegram_user_id=111, prompt="a"))
-    await asyncio.sleep(0)
-    second_task = asyncio.create_task(agent.respond(telegram_user_id=222, prompt="b"))
-
-    first_result = await first_task
-    second_result = await second_task
-
-    assert first_result == "first done"
-    assert second_result == "second done"
-    assert observed_during_first == 111
 
 
 @pytest.mark.asyncio
@@ -709,10 +658,11 @@ async def test_respond_reconnects_once_after_sdk_connection_error() -> None:
 
     mock_client.receive_response = _receive_response
     agent._client = mock_client
+    agent._telegram_user_id = 1
     agent.stop = AsyncMock()  # type: ignore[method-assign]
     agent.start = AsyncMock()  # type: ignore[method-assign]
 
-    result = await agent.respond(telegram_user_id=1, prompt="hello")
+    result = await agent.respond(prompt="hello")
 
     assert result == "recovered"
     agent.stop.assert_awaited_once()
@@ -739,11 +689,57 @@ async def test_respond_propagates_when_reconnect_also_fails() -> None:
         CLIConnectionError("subprocess died")
     )
     agent._client = mock_client
+    agent._telegram_user_id = 1
     agent.stop = AsyncMock()  # type: ignore[method-assign]
     agent.start = AsyncMock()  # type: ignore[method-assign]
 
     with pytest.raises(CLIConnectionError):
-        await agent.respond(telegram_user_id=1, prompt="hello")
+        await agent.respond(prompt="hello")
 
     agent.stop.assert_awaited_once()
     agent.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_users_on_separate_agents_dont_block_each_other() -> None:
+    """The bug this refactor fixes: previously every user shared one Agent,
+    whose lock was held for the whole respond() call — including while
+    can_use_tool awaited a confirmation button tap. One user's pending
+    confirmation could stall every other user's message for up to
+    confirmation_ttl_seconds. With one Agent per user (AgentPool), each
+    lock is independent, so this must NOT time out.
+    """
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    agent_a = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent_b = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+
+    async def _stuck_awaiting_confirmation() -> AsyncIterator[AssistantMessage]:
+        # Stands in for a destructive tool call blocked on can_use_tool
+        # awaiting a confirmation tap that hasn't happened yet.
+        await asyncio.sleep(1.0)
+        yield _make_text_message("user a done")
+
+    client_a = AsyncMock()
+    client_a.query = AsyncMock()
+    client_a.receive_response = lambda: _stuck_awaiting_confirmation()
+    agent_a._client = client_a
+    agent_a._telegram_user_id = 111
+
+    client_b = AsyncMock()
+    client_b.query = AsyncMock()
+    client_b.receive_response = lambda: _fast_generator("user b done")
+    agent_b._client = client_b
+    agent_b._telegram_user_id = 222
+
+    task_a = asyncio.create_task(agent_a.respond(prompt="delete something"))
+    await asyncio.sleep(0)  # let task_a start and acquire its own lock
+
+    # Under the old shared-Agent design this would queue behind agent_a's
+    # in-flight confirmation and blow this timeout.
+    result_b = await asyncio.wait_for(agent_b.respond(prompt="hi"), timeout=0.2)
+    assert result_b == "user b done"
+
+    result_a = await task_a
+    assert result_a == "user a done"

@@ -7,7 +7,6 @@ import pytest
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._status_label import _format_status_label
 from cleanrr.tools._user_request import _resolve_user_id
 from cleanrr.tools.overseerr import build_tools
@@ -138,7 +137,7 @@ def test_list_my_requests_has_no_input_schema(
     mock_identity: MagicMock, mock_client: AsyncMock
 ) -> None:
     """The tool takes no arguments — it always returns the caller's full list."""
-    tools = build_tools(mock_client, mock_identity, _settings())
+    tools = build_tools(mock_client, mock_identity, _settings(), telegram_user_id=1)
     tool_fn = tools[0]
     assert tool_fn.name == "list_my_requests"
     assert tool_fn.input_schema == {}
@@ -150,17 +149,13 @@ async def test_list_my_requests_not_configured(
 ) -> None:
     """Tool returns 'not configured' when settings are missing."""
     unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
-    tools = build_tools(mock_client, mock_identity, unconfigured)
+    tools = build_tools(mock_client, mock_identity, unconfigured, telegram_user_id=1)
     assert len(tools) == 2
 
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "configured" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "configured" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -169,16 +164,12 @@ async def test_list_my_requests_unlinked_user(
 ) -> None:
     """Tool returns 'you haven't linked' when user has no mapping."""
     mock_identity.get_link = AsyncMock(return_value=None)
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is False
-        assert "linked" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is False
+    assert "linked" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -191,16 +182,12 @@ async def test_list_my_requests_user_search_404(
     user_response.status_code = 404
     mock_client.get.return_value = user_response
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is False
-        assert "couldn't find" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is False
+    assert "couldn't find" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -213,16 +200,12 @@ async def test_list_my_requests_user_search_500(
     user_response.status_code = 500
     mock_client.get.return_value = user_response
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "couldn't reach" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "couldn't reach" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -242,30 +225,12 @@ async def test_list_my_requests_empty(
 
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
-    tool_fn = tools[0]
-
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is False
-        assert "haven't requested anything" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
-
-
-@pytest.mark.asyncio
-async def test_list_my_requests_context_missing(
-    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
-) -> None:
-    """Tool returns 'Internal error' when ContextVar is not set."""
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
     result = await tool_fn.handler({})
-    assert result["is_error"] is True
-    assert "internal error" in result["content"][0]["text"].lower()
-    assert mock_client.get.call_count == 0
+    assert result["is_error"] is False
+    assert "haven't requested anything" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -280,16 +245,12 @@ async def test_list_my_requests_parse_error(
     user_response.json.side_effect = ValueError("bad json")
     mock_client.get.return_value = user_response
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -303,15 +264,11 @@ async def test_list_my_requests_user_search_empty_results(
     user_response.json.return_value = {"results": []}
     mock_client.get.return_value = user_response
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is False
-        assert "couldn't find" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is False
+    assert "couldn't find" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -327,15 +284,11 @@ async def test_list_my_requests_requests_http_500(
     requests_response.status_code = 500
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "couldn't fetch" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "couldn't fetch" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -352,15 +305,11 @@ async def test_list_my_requests_requests_parse_error(
     requests_response.json.side_effect = ValueError("malformed")
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -376,15 +325,11 @@ async def test_list_my_requests_non_dict_response(
     requests_response.json.return_value = ["not", "a", "dict"]
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -400,15 +345,11 @@ async def test_list_my_requests_non_list_results(
     requests_response.json.return_value = {"results": "not-a-list"}
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -429,16 +370,12 @@ async def test_list_my_requests_notes_truncation_when_total_exceeds_page(
     }
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        text = result["content"][0]["text"]
-        assert "You have 75 Overseerr request(s)" in text
-        assert "showing the 1 most recent" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    text = result["content"][0]["text"]
+    assert "You have 75 Overseerr request(s)" in text
+    assert "showing the 1 most recent" in text
 
 
 @pytest.mark.asyncio
@@ -459,16 +396,12 @@ async def test_list_my_requests_formats_declined_and_partial(
     }
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        text = result["content"][0]["text"]
-        assert "declined" in text
-        assert "partially available" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    text = result["content"][0]["text"]
+    assert "declined" in text
+    assert "partially available" in text
 
 
 @pytest.mark.asyncio
@@ -479,15 +412,11 @@ async def test_list_my_requests_unexpected_exception(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     mock_client.get.side_effect = RuntimeError("boom")
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is True
-        assert "error" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is True
+    assert "error" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -524,21 +453,17 @@ async def test_list_my_requests_formatted_output(
 
     mock_client.get.side_effect = [user_response, requests_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "2 Overseerr request" in text
-        assert "The Matrix (1999)" in text
-        assert "available" in text
-        assert "Breaking Bad" in text
-        assert "processing" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "2 Overseerr request" in text
+    assert "The Matrix (1999)" in text
+    assert "available" in text
+    assert "Breaking Bad" in text
+    assert "processing" in text
 
 
 @pytest.mark.asyncio
@@ -567,14 +492,10 @@ async def test_list_my_requests_resolves_titles_from_real_overseerr_shape(
 
     mock_client.get.side_effect = [user_response, requests_response, movie_detail_response]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({})
 
     assert result["is_error"] is False
     assert "Amélie" in result["content"][0]["text"]
@@ -610,16 +531,12 @@ async def test_find_request_not_configured(
     mock_identity: MagicMock, mock_client: AsyncMock
 ) -> None:
     unconfigured = _settings(overseerr_url=None, overseerr_api_key=None)
-    tools = build_tools(mock_client, mock_identity, unconfigured)
+    tools = build_tools(mock_client, mock_identity, unconfigured, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is True
-        assert "configured" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "configured" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -627,16 +544,12 @@ async def test_find_request_unlinked_user(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        assert "linked" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    assert "linked" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -644,30 +557,12 @@ async def test_find_request_empty_input(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value="testuser")
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "   "})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        assert "which title" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
-
-
-@pytest.mark.asyncio
-async def test_find_request_context_missing(
-    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
-) -> None:
-    """Tool returns 'Internal error' when ContextVar is not set."""
-    tools = build_tools(mock_client, mock_identity, settings)
-    tool_fn = _find_tool(tools)
-
-    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-    assert result["is_error"] is True
-    assert "internal error" in result["content"][0]["text"].lower()
-    assert mock_client.get.call_count == 0
+    result = await tool_fn.handler({"title": "   "})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    assert "which title" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -680,16 +575,12 @@ async def test_find_request_user_not_found(
     resp.status_code = 404
     mock_client.get.return_value = resp
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        assert "couldn't find your overseerr account" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    assert "couldn't find your overseerr account" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -703,16 +594,12 @@ async def test_find_request_user_parse_error(
     resp.json.side_effect = ValueError("bad json")
     mock_client.get.return_value = resp
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -725,16 +612,12 @@ async def test_find_request_user_http_error(
     resp.status_code = 500
     mock_client.get.return_value = resp
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is True
-        assert "couldn't reach" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "couldn't reach" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -753,18 +636,14 @@ async def test_find_request_no_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "X-Files"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "couldn't find" in text.lower()
-        assert "X-Files" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "X-Files"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "couldn't find" in text.lower()
+    assert "X-Files" in text
 
 
 @pytest.mark.asyncio
@@ -785,18 +664,14 @@ async def test_find_request_exact_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "dune part one"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "Dune Part One" in text
-        assert "available" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "dune part one"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "Dune Part One" in text
+    assert "available" in text
 
 
 @pytest.mark.asyncio
@@ -819,17 +694,13 @@ async def test_find_request_exact_match_without_release_year(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "severance"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "Your request for Severance:" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "severance"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "Your request for Severance:" in text
 
 
 @pytest.mark.asyncio
@@ -850,18 +721,14 @@ async def test_find_request_fuzzy_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "dune part 2"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "Dune Part Two" in text
-        assert "processing" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "dune part 2"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "Dune Part Two" in text
+    assert "processing" in text
 
 
 @pytest.mark.asyncio
@@ -888,17 +755,13 @@ async def test_find_request_year_stripped(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune Part Two (2024)"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "Dune Part Two" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune Part Two (2024)"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "Dune Part Two" in text
 
 
 @pytest.mark.asyncio
@@ -917,19 +780,15 @@ async def test_find_request_multi_match(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is False
-        text = result["content"][0]["text"]
-        assert "possible matches" in text.lower()
-        assert "Dune Part One" in text
-        assert "Dune Part Two" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is False
+    text = result["content"][0]["text"]
+    assert "possible matches" in text.lower()
+    assert "Dune Part One" in text
+    assert "Dune Part Two" in text
 
 
 @pytest.mark.asyncio
@@ -947,16 +806,12 @@ async def test_find_request_http_error(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is True
-        assert "couldn't reach" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "couldn't reach" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -976,16 +831,12 @@ async def test_find_request_requests_parse_error(
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
-        assert result["is_error"] is True
-        assert "unexpected response format" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"title": "Dune"})  # type: ignore[union-attr]
+    assert result["is_error"] is True
+    assert "unexpected response format" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
@@ -1048,14 +899,10 @@ async def test_find_request_increments_metric_on_every_exit(
         req_resp.json.return_value = _make_requests_payload("Dune Part One")
         mock_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_client, mock_identity, settings)
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
-    token = current_telegram_user_id.set(1)
-    try:
-        await tool_fn.handler({"title": title})  # type: ignore[union-attr]
-    finally:
-        current_telegram_user_id.reset(token)
+    await tool_fn.handler({"title": title})  # type: ignore[union-attr]
 
     matched = any(t == "find_my_request" and s == expected_status for t, s in recorded)
     assert matched, f"Expected metric find_my_request/{expected_status}, got {recorded}"

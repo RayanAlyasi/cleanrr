@@ -7,7 +7,6 @@ import pytest
 
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.radarr import build_tools
 
 
@@ -68,7 +67,9 @@ async def test_get_movie_status_radarr_not_configured(
     mock_identity: MagicMock,
 ) -> None:
     settings = _settings(radarr_url=None, radarr_api_key=None)
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
     result = await get_movie_status.handler({"title": "Dune"})
@@ -83,27 +84,14 @@ async def test_get_movie_status_overseerr_not_configured(
     mock_identity: MagicMock,
 ) -> None:
     settings = _settings(overseerr_url=None, overseerr_api_key=None)
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
     result = await get_movie_status.handler({"title": "Dune"})
     assert result["is_error"] is True
     assert "Overseerr isn't configured" in result["content"][0]["text"]
-
-
-@pytest.mark.asyncio
-async def test_get_movie_status_context_missing(
-    mock_radarr_client: AsyncMock,
-    mock_overseerr_client: AsyncMock,
-    mock_identity: MagicMock,
-    settings: Settings,
-) -> None:
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
-    get_movie_status = tools[0]
-
-    result = await get_movie_status.handler({"title": "Dune"})
-    assert result["is_error"] is True
-    assert "Internal error" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -114,15 +102,13 @@ async def test_get_movie_status_unlinked_user(
     settings: Settings,
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value=None)
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "linked your Overseerr account" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "linked your Overseerr account" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -133,15 +119,13 @@ async def test_get_movie_status_empty_input(
     settings: Settings,
 ) -> None:
     mock_identity.get_link = AsyncMock(return_value="alice")
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "  "})
-        assert "which title" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "  "})
+    assert "which title" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -156,15 +140,13 @@ async def test_get_movie_status_user_not_found(
     user_resp.status_code = 404
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Couldn't find your Overseerr account" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Couldn't find your Overseerr account" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -179,15 +161,13 @@ async def test_get_movie_status_overseerr_http_error(
     user_resp.status_code = 500
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Couldn't reach Overseerr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Couldn't reach Overseerr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -203,15 +183,13 @@ async def test_get_movie_status_overseerr_parse_error(
     user_resp.json.side_effect = ValueError("bad json")
     mock_overseerr_client.get.return_value = user_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Unexpected response format from Overseerr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Unexpected response format from Overseerr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -235,15 +213,13 @@ async def test_get_movie_status_no_match(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Completely Different Movie"})
-        assert "couldn't find a request" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Completely Different Movie"})
+    assert "couldn't find a request" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -278,18 +254,16 @@ async def test_get_movie_status_multi_match(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        text = result["content"][0]["text"]
-        assert "possible matches" in text
-        assert "Dune Part One" in text
-        assert "Dune Part Two" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    text = result["content"][0]["text"]
+    assert "possible matches" in text
+    assert "Dune Part One" in text
+    assert "Dune Part Two" in text
 
 
 @pytest.mark.asyncio
@@ -320,15 +294,13 @@ async def test_get_movie_status_not_a_movie(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "The Bear"})
-        assert "TV show" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "The Bear"})
+    assert "TV show" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -356,16 +328,14 @@ async def test_get_movie_status_tmdb_id_wrong_type(
     }
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "Unexpected response format" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "Unexpected response format" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -386,15 +356,13 @@ async def test_get_movie_status_not_in_radarr(
     movie_resp.json.return_value = []
     mock_radarr_client.get.return_value = movie_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "hasn't picked it up" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "hasn't picked it up" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -414,16 +382,14 @@ async def test_get_movie_status_radarr_http_error(
     movie_resp.status_code = 500
     mock_radarr_client.get.return_value = movie_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "Couldn't reach Radarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "Couldn't reach Radarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -444,16 +410,14 @@ async def test_get_movie_status_radarr_parse_error(
     movie_resp.json.side_effect = ValueError("bad json")
     mock_radarr_client.get.return_value = movie_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Radarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Radarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -474,16 +438,14 @@ async def test_get_movie_status_movie_not_dict(
     movie_resp.json.return_value = ["not a dict"]
     mock_radarr_client.get.return_value = movie_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Radarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Radarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -504,16 +466,14 @@ async def test_get_movie_status_movie_missing_id(
     movie_resp.json.return_value = [{"title": "Dune"}]
     mock_radarr_client.get.return_value = movie_resp
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "Unexpected response format from Radarr" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "Unexpected response format from Radarr" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -539,16 +499,14 @@ async def test_get_movie_status_downloaded(
 
     mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -576,21 +534,19 @@ async def test_get_movie_status_downloading(
 
     mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "The Batman"})
-        assert "The Batman (2022): downloading." in result["content"][0]["text"]
-        assert result["is_error"] is False
+    result = await get_movie_status.handler({"title": "The Batman"})
+    assert "The Batman (2022): downloading." in result["content"][0]["text"]
+    assert result["is_error"] is False
 
-        # Regression: Radarr's queue endpoint only filters on the plural,
-        # array-bound "movieIds" — "movieId" is silently ignored server-side.
-        queue_call = mock_radarr_client.get.call_args_list[1]
-        assert queue_call.kwargs["params"]["movieIds"] == [42]
-    finally:
-        current_telegram_user_id.reset(token)
+    # Regression: Radarr's queue endpoint only filters on the plural,
+    # array-bound "movieIds" — "movieId" is silently ignored server-side.
+    queue_call = mock_radarr_client.get.call_args_list[1]
+    assert queue_call.kwargs["params"]["movieIds"] == [42]
 
 
 @pytest.mark.asyncio
@@ -618,18 +574,16 @@ async def test_get_movie_status_nothing_yet(
 
     mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Oppenheimer"})
-        text = result["content"][0]["text"]
-        assert "nothing yet" in text
-        assert "Radarr is searching" in text
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Oppenheimer"})
+    text = result["content"][0]["text"]
+    assert "nothing yet" in text
+    assert "Radarr is searching" in text
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -654,16 +608,14 @@ async def test_get_movie_status_queue_fetch_fails_still_returns_movie(
 
     mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -688,16 +640,14 @@ async def test_get_movie_status_queue_malformed_json_still_returns_movie(
 
     mock_radarr_client.get.side_effect = [movie_resp, queue_resp]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -718,16 +668,14 @@ async def test_get_movie_status_queue_fetch_raises_still_returns_movie(
 
     mock_radarr_client.get.side_effect = [movie_resp, httpx.ConnectError("boom")]
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert "Dune (2021) is downloaded." in result["content"][0]["text"]
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert "Dune (2021) is downloaded." in result["content"][0]["text"]
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -744,13 +692,11 @@ async def test_get_movie_status_radarr_http_exception(
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_radarr_client.get.side_effect = httpx.ConnectError("connection refused")
 
-    tools = build_tools(mock_radarr_client, mock_overseerr_client, mock_identity, settings)
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
     get_movie_status = tools[0]
 
-    token = current_telegram_user_id.set(1)
-    try:
-        result = await get_movie_status.handler({"title": "Dune"})
-        assert result["is_error"] is True
-        assert "error occurred" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await get_movie_status.handler({"title": "Dune"})
+    assert result["is_error"] is True
+    assert "error occurred" in result["content"][0]["text"]

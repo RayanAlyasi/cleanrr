@@ -7,7 +7,6 @@ import pytest
 
 import cleanrr.metrics
 from cleanrr.config import Settings
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.qbittorrent_write import build_tools
 
 _VALID_HASH = "a" * 40
@@ -76,16 +75,12 @@ async def test_admin_happy_path_deletes_with_files(
     mock_client.post.side_effect = [_login_ok(), MagicMock(status_code=200)]
     mock_client.get.side_effect = [_torrent_info(), _empty_torrents()]
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     assert len(tools) == 1
     tool_fn = tools[0]
     assert tool_fn.name == "delete_torrent"
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is False
     assert "Movie.X" in result["content"][0]["text"]
@@ -102,14 +97,10 @@ async def test_non_admin_caller_is_rejected_with_metric(
     tool_calls_before = _tool_calls_value("delete_torrent", "unauthorized")
     destructive_before = _destructive_value("delete_torrent", "unauthorized")
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=999)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(999)  # not in admin_telegram_ids
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "admin" in result["content"][0]["text"].lower()
@@ -124,14 +115,10 @@ async def test_non_admin_caller_is_rejected_with_metric(
 @pytest.mark.asyncio
 async def test_not_configured_when_qbit_url_missing(mock_client: AsyncMock) -> None:
     unconfigured = _settings(qbittorrent_url=None)
-    tools = build_tools(mock_client, unconfigured)
+    tools = build_tools(mock_client, unconfigured, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "configured" in result["content"][0]["text"].lower()
@@ -139,16 +126,12 @@ async def test_not_configured_when_qbit_url_missing(mock_client: AsyncMock) -> N
 
 @pytest.mark.asyncio
 async def test_bad_hash_format_rejected(mock_client: AsyncMock, settings: Settings) -> None:
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        for bad in ["", "abc", "g" * 40, "../etc/passwd", "a" * 39]:
-            result = await tool_fn.handler({"torrent_hash": bad})
-            assert result["is_error"] is True, f"should reject {bad!r}"
-    finally:
-        current_telegram_user_id.reset(token)
+    for bad in ["", "abc", "g" * 40, "../etc/passwd", "a" * 39]:
+        result = await tool_fn.handler({"torrent_hash": bad})
+        assert result["is_error"] is True, f"should reject {bad!r}"
 
     mock_client.post.assert_not_called()
 
@@ -160,14 +143,10 @@ async def test_hash_not_found_returns_friendly_message(
     mock_client.post.return_value = _login_ok()
     mock_client.get.return_value = _empty_torrents()
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert "no torrent" in result["content"][0]["text"].lower()
     # delete should NOT have been issued
@@ -181,14 +160,10 @@ async def test_login_failure_returns_auth_error(mock_client: AsyncMock, settings
     bad_login.text = "Forbidden"
     mock_client.post.return_value = bad_login
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "auth" in result["content"][0]["text"].lower()
@@ -201,14 +176,10 @@ async def test_http_error_fetching_torrent_pre_delete(
     mock_client.post.return_value = _login_ok()
     mock_client.get.side_effect = httpx.RequestError("boom")
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "unreachable" in result["content"][0]["text"].lower()
@@ -224,14 +195,10 @@ async def test_malformed_json_fetching_torrent_pre_delete(
     mock_client.post.return_value = _login_ok()
     mock_client.get.return_value = bad_json
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "unexpected response" in result["content"][0]["text"].lower()
@@ -246,14 +213,10 @@ async def test_verification_fetch_failure_after_delete_treated_as_success(
     mock_client.post.side_effect = [_login_ok(), MagicMock(status_code=200)]
     mock_client.get.side_effect = [_torrent_info(), httpx.RequestError("boom")]
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is False
     assert "Movie.X" in result["content"][0]["text"]
@@ -266,14 +229,10 @@ async def test_http_error_on_delete_returns_friendly(
     mock_client.post.side_effect = [_login_ok(), httpx.RequestError("boom")]
     mock_client.get.return_value = _torrent_info()
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
 
@@ -285,14 +244,10 @@ async def test_delete_non_200_returns_error(mock_client: AsyncMock, settings: Se
     mock_client.post.side_effect = [_login_ok(), bad_del]
     mock_client.get.return_value = _torrent_info()
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "500" in result["content"][0]["text"]
@@ -306,14 +261,10 @@ async def test_delete_accepted_but_torrent_still_present_returns_error(
     # pre-delete shows torrent; post-delete still shows it → suspicious
     mock_client.get.side_effect = [_torrent_info(), _torrent_info()]
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "still listed" in result["content"][0]["text"].lower()
@@ -328,26 +279,10 @@ async def test_session_expired_during_torrent_fetch(
     mock_client.post.return_value = _login_ok()
     mock_client.get.return_value = forbidden
 
-    tools = build_tools(mock_client, settings)
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    token = current_telegram_user_id.set(123)
-    try:
-        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
 
     assert result["is_error"] is True
     assert "session" in result["content"][0]["text"].lower()
-
-
-@pytest.mark.asyncio
-async def test_missing_contextvar_returns_internal_error(
-    mock_client: AsyncMock, settings: Settings
-) -> None:
-    tools = build_tools(mock_client, settings)
-    tool_fn = tools[0]
-    # No contextvar set
-    result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
-    assert result["is_error"] is True
-    assert "internal error" in result["content"][0]["text"].lower()

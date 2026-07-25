@@ -19,7 +19,6 @@ from cleanrr.permissions import (
 )
 from cleanrr.permissions._callback import ADMIN_ONLY_TOOLS
 from cleanrr.permissions._formatters import _format_bytes, _request_status_label
-from cleanrr.tools._context import current_telegram_user_id
 
 
 def _settings(ttl: float = 60.0, admin_ids: set[int] | None = None) -> Settings:
@@ -287,7 +286,7 @@ async def test_read_tool_allows_immediately_without_telegram_message() -> None:
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=60)
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     result = await cb("mcp__cleanrr__list_my_requests", {"foo": "bar"}, MagicMock())
 
@@ -300,10 +299,9 @@ async def test_write_tool_with_confirm_returns_allow_and_increments_metric() -> 
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=60)
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     before = _counter("remove_my_request", "confirmed")
-    token = current_telegram_user_id.set(42)
 
     async def _resolve_after_send() -> None:
         # Wait for can_use_tool to register the pending confirmation
@@ -318,13 +316,10 @@ async def test_write_tool_with_confirm_returns_allow_and_increments_metric() -> 
             raise AssertionError("no pending confirmation appeared")
         await reg.resolve(cid, telegram_user_id=42, allowed=True)
 
-    try:
-        results = await asyncio.gather(
-            cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
-            _resolve_after_send(),
-        )
-    finally:
-        current_telegram_user_id.reset(token)
+    results = await asyncio.gather(
+        cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+        _resolve_after_send(),
+    )
 
     result = results[0]
     assert isinstance(result, PermissionResultAllow)
@@ -337,10 +332,9 @@ async def test_write_tool_with_cancel_returns_deny_and_increments_metric() -> No
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=60)
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     before = _counter("remove_my_request", "denied")
-    token = current_telegram_user_id.set(42)
 
     async def _cancel_after_send() -> None:
         for _ in range(50):
@@ -353,13 +347,10 @@ async def test_write_tool_with_cancel_returns_deny_and_increments_metric() -> No
             raise AssertionError("no pending confirmation appeared")
         await reg.resolve(cid, telegram_user_id=42, allowed=False)
 
-    try:
-        results = await asyncio.gather(
-            cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
-            _cancel_after_send(),
-        )
-    finally:
-        current_telegram_user_id.reset(token)
+    results = await asyncio.gather(
+        cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+        _cancel_after_send(),
+    )
 
     result = results[0]
     assert isinstance(result, PermissionResultDeny)
@@ -371,14 +362,10 @@ async def test_write_tool_times_out_when_no_click() -> None:
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=0.1)
     settings = _settings(ttl=0.1)
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     before = _counter("remove_my_request", "timed_out")
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
     assert _counter("remove_my_request", "timed_out") == before + 1
@@ -395,13 +382,9 @@ async def test_admin_only_tool_denies_non_admin_before_prompt() -> None:
     before = cleanrr.metrics.tool_calls_total.labels(
         tool="delete_torrent", status="unauthorized"
     )._value.get()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
     bot.send_message.assert_not_awaited()
@@ -417,13 +400,9 @@ async def test_admin_only_tool_reaches_prompt_for_admin() -> None:
     bot = _make_bot()
     reg = ConfirmationRegistry(ttl_seconds=0.1)
     settings = _settings(ttl=0.1, admin_ids={42})
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await cb("mcp__cleanrr__delete_torrent", {"torrent_hash": "a" * 40}, MagicMock())
 
     bot.send_message.assert_awaited_once()
     assert isinstance(result, PermissionResultDeny)  # timed out — no click in this test
@@ -446,14 +425,10 @@ async def test_registry_full_denies_with_metric() -> None:
         )
 
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     before = _counter("remove_my_request", "denied")
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
     assert _counter("remove_my_request", "denied") == before + 1
@@ -935,23 +910,8 @@ def test_telegram_bot_param_is_not_required_to_make_callback() -> None:
     settings = _settings()
     bot: Any = MagicMock()
     reg = ConfirmationRegistry(ttl_seconds=60)
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
     assert callable(cb)
-
-
-@pytest.mark.asyncio
-async def test_can_use_tool_denies_when_contextvar_not_set() -> None:
-    """can_use_tool must deny gracefully if the per-request contextvar wasn't set."""
-    bot = _make_bot()
-    reg = ConfirmationRegistry(ttl_seconds=60)
-    settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
-
-    # Note: NOT setting current_telegram_user_id
-    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
-
-    assert isinstance(result, PermissionResultDeny)
-    bot.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -962,14 +922,10 @@ async def test_can_use_tool_denies_when_send_message_fails() -> None:
     bot.send_message = AsyncMock(side_effect=_TelegramError("network"))
     reg = ConfirmationRegistry(ttl_seconds=60)
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     before = _counter("remove_my_request", "denied")
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
     assert _counter("remove_my_request", "denied") == before + 1
@@ -985,13 +941,11 @@ async def test_can_use_tool_falls_back_when_formatter_crashes() -> None:
     async def bad_formatter(_tool_args: dict[str, Any]) -> str:
         raise ValueError("boom")
 
-    cb = make_can_use_tool(bot, reg, settings, formatters={"remove_my_request": bad_formatter})
+    cb = make_can_use_tool(
+        bot, reg, settings, formatters={"remove_my_request": bad_formatter}, telegram_user_id=42
+    )
 
-    token = current_telegram_user_id.set(42)
-    try:
-        await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
-    finally:
-        current_telegram_user_id.reset(token)
+    await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     bot.send_message.assert_awaited_once()
     assert bot.send_message.call_args.kwargs["text"] == "Run remove_my_request?"
@@ -1032,9 +986,7 @@ async def test_edit_outcome_failure_is_swallowed() -> None:
     bot.edit_message_text = AsyncMock(side_effect=_TelegramError("can't edit"))
     reg = ConfirmationRegistry(ttl_seconds=60)
     settings = _settings()
-    cb = make_can_use_tool(bot, reg, settings, formatters={})
-
-    token = current_telegram_user_id.set(42)
+    cb = make_can_use_tool(bot, reg, settings, formatters={}, telegram_user_id=42)
 
     async def _confirm_after_send() -> None:
         for _ in range(50):
@@ -1047,13 +999,10 @@ async def test_edit_outcome_failure_is_swallowed() -> None:
             raise AssertionError("no pending appeared")
         await reg.resolve(cid, telegram_user_id=42, allowed=True)
 
-    try:
-        results = await asyncio.gather(
-            cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
-            _confirm_after_send(),
-        )
-    finally:
-        current_telegram_user_id.reset(token)
+    results = await asyncio.gather(
+        cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+        _confirm_after_send(),
+    )
 
     assert isinstance(results[0], PermissionResultAllow)
 

@@ -19,7 +19,6 @@ import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.permissions._formatters import ConfirmationFormatter
 from cleanrr.permissions._registry import ConfirmationRegistry, Outcome
-from cleanrr.tools._context import current_telegram_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -53,8 +52,15 @@ def make_can_use_tool(
     registry: ConfirmationRegistry,
     settings: Settings,
     formatters: dict[str, ConfirmationFormatter],
+    *,
+    telegram_user_id: int,
 ) -> CanUseTool:
-    """Build the ``can_use_tool`` callback wired to a specific Telegram bot + registry."""
+    """Build the ``can_use_tool`` callback wired to a specific Telegram bot + registry.
+
+    ``telegram_user_id`` is the caller this callback is scoped to — each
+    per-user Agent builds its own callback via this factory rather than
+    reading a shared, process-wide "current user" global.
+    """
 
     async def _resolve_prompt_text(tool_name: str, tool_args: dict[str, Any]) -> str:
         # Each formatter is responsible for its own timeout (see the remove_my_request
@@ -80,12 +86,6 @@ def make_can_use_tool(
         bare_name = tool_name.rsplit("__", 1)[-1]
         if bare_name not in WRITE_TOOLS:
             return PermissionResultAllow(updated_input=input_data)
-
-        try:
-            telegram_user_id = current_telegram_user_id.get()
-        except LookupError:
-            logger.error("can_use_tool fired without a telegram user contextvar")
-            return PermissionResultDeny(message="internal error: no caller context")
 
         if bare_name in ADMIN_ONLY_TOOLS and telegram_user_id not in settings.admin_telegram_ids:
             metrics.tool_calls_total.labels(tool=bare_name, status="unauthorized").inc()
