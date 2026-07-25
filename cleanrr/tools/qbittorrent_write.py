@@ -10,7 +10,6 @@ from claude_agent_sdk import SdkMcpTool, tool
 
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools._qbittorrent_auth import (
     QbitAuthError,
     fetch_torrents,
@@ -22,7 +21,9 @@ from cleanrr.tools._results import text_result
 logger = logging.getLogger(__name__)
 
 
-def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkMcpTool]:
+def build_tools(
+    qbit_client: httpx.AsyncClient, settings: Settings, *, telegram_user_id: int
+) -> list[SdkMcpTool]:
     """Factory for destructive qBittorrent tools.
 
     Admin-only. cleanrr.permissions.ADMIN_ONLY_TOOLS already denies non-admins
@@ -58,13 +59,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
             metrics.tool_calls_total.labels(tool="delete_torrent", status="bad_args").inc()
             return text_result("Bad torrent hash.", is_error=True)
 
-        try:
-            caller_id = current_telegram_user_id.get()
-        except LookupError:
-            metrics.tool_calls_total.labels(tool="delete_torrent", status="context_missing").inc()
-            return text_result("Internal error — user context unavailable.", is_error=True)
-
-        if caller_id not in settings.admin_telegram_ids:
+        if telegram_user_id not in settings.admin_telegram_ids:
             # Pre-confirmation guard, not a confirmation outcome — see
             # permissions.Outcome for why this isn't destructive_actions_total.
             metrics.tool_calls_total.labels(tool="delete_torrent", status="unauthorized").inc()
@@ -145,7 +140,7 @@ def build_tools(qbit_client: httpx.AsyncClient, settings: Settings) -> list[SdkM
         log_name = torrent_name.replace("\n", " ").replace("\r", " ")
         logger.info(
             "destructive_action_executed: tool=delete_torrent admin=%s hash=%s name=%s",
-            caller_id,
+            telegram_user_id,
             torrent_hash,
             log_name,
         )
