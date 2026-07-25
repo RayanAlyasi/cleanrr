@@ -118,6 +118,9 @@ async def test_resolve_user_id_malformed_json(mock_client: AsyncMock) -> None:
         (2, 2, "approved, pending download"),
         (3, 5, "declined, available"),
         (None, 3, "processing"),
+        (4, None, "failed"),
+        (5, None, "completed"),
+        (2, 6, "approved, deleted"),
     ],
 )
 def test_format_status_label_combinations(
@@ -356,6 +359,84 @@ async def test_list_my_requests_requests_parse_error(
         result = await tool_fn.handler({})
         assert result["is_error"] is True
         assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_non_dict_response(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = ["not", "a", "dict"]
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is True
+        assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_non_list_results(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = {"results": "not-a-list"}
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        assert result["is_error"] is True
+        assert "unexpected response format" in result["content"][0]["text"].lower()
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_notes_truncation_when_total_exceeds_page(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Regression: the header must reflect Overseerr's real total (pageInfo),
+    not just this page's length, once results are truncated."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+    user_response = MagicMock()
+    user_response.status_code = 200
+    user_response.json.return_value = {"results": [{"id": 123}]}
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = {
+        "pageInfo": {"results": 75},
+        "results": [{"id": 1, "status": 1, "media": {"title": "Movie A", "status": 2}}],
+    }
+    mock_client.get.side_effect = [user_response, requests_response]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = tools[0]
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({})
+        text = result["content"][0]["text"]
+        assert "You have 75 Overseerr request(s)" in text
+        assert "showing the 1 most recent" in text
     finally:
         current_telegram_user_id.reset(token)
 
@@ -714,6 +795,39 @@ async def test_find_request_exact_match(
         text = result["content"][0]["text"]
         assert "Dune Part One" in text
         assert "available" in text
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_find_request_exact_match_without_release_year(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """_make_requests_payload always sets releaseYear — real Overseerr media
+    without a resolvable date shouldn't. Covers the no-year text branch."""
+    mock_identity.get_link = AsyncMock(return_value="testuser")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 99}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [{"id": 1, "status": 2, "media": {"title": "Severance", "status": 5}}]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    tools = build_tools(mock_client, mock_identity, settings)
+    tool_fn = _find_tool(tools)
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await tool_fn.handler({"title": "severance"})  # type: ignore[union-attr]
+        assert result["is_error"] is False
+        text = result["content"][0]["text"]
+        assert "Your request for Severance:" in text
     finally:
         current_telegram_user_id.reset(token)
 

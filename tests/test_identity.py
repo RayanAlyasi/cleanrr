@@ -100,6 +100,38 @@ async def test_start_required_before_operations(tmp_path: Path) -> None:
         await store.issue_code("alice")
 
 
+async def test_redeem_code_requires_start(tmp_path: Path) -> None:
+    store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
+    with pytest.raises(RuntimeError, match="start"):
+        await store.redeem_code("CODE-CODE", telegram_user_id=1)
+
+
+async def test_get_link_requires_start(tmp_path: Path) -> None:
+    store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
+    with pytest.raises(RuntimeError, match="start"):
+        await store.get_link(1)
+
+
+async def test_user_count_requires_start(tmp_path: Path) -> None:
+    store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
+    with pytest.raises(RuntimeError, match="start"):
+        await store.user_count()
+
+
+async def test_start_twice_is_a_noop(tmp_path: Path) -> None:
+    store = await _store(tmp_path)
+    try:
+        await store.start()  # must not raise or reopen the connection
+        assert await store.get_link(1) is None
+    finally:
+        await store.stop()
+
+
+async def test_stop_before_start_is_a_noop(tmp_path: Path) -> None:
+    store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
+    await store.stop()  # must not raise
+
+
 async def test_issue_code_logs_at_info(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     store = await _store(tmp_path)
     try:

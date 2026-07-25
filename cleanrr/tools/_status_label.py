@@ -6,6 +6,10 @@ def _format_status_label(req_status: int | None, media_status: int | None) -> st
         status_parts.append("approved")
     elif req_status == 3:
         status_parts.append("declined")
+    elif req_status == 4:
+        status_parts.append("failed")
+    elif req_status == 5:
+        status_parts.append("completed")
 
     if media_status == 2:
         status_parts.append("pending download")
@@ -15,5 +19,7 @@ def _format_status_label(req_status: int | None, media_status: int | None) -> st
         status_parts.append("partially available")
     elif media_status == 5:
         status_parts.append("available")
+    elif media_status == 6:
+        status_parts.append("deleted")
 
     return ", ".join(status_parts) if status_parts else "unknown"

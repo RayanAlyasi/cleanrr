@@ -23,6 +23,7 @@ from cleanrr.handlers import (
     cmd_link,
     cmd_start,
     on_confirmation,
+    on_error,
     on_message,
 )
 from cleanrr.identity import Identity
@@ -107,6 +108,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("link", cmd_link))
     app.add_handler(CallbackQueryHandler(on_confirmation, pattern=f"^{re.escape(CALLBACK_PREFIX)}"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
+    app.add_error_handler(on_error)
     return app
 
 

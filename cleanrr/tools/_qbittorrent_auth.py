@@ -18,6 +18,21 @@ class QbitAuthError(Exception):
     pass
 
 
+def normalize_torrent_hash(value: object) -> str | None:
+    """Strip/lowercase and validate a torrent hash (40-char SHA-1 hex).
+
+    Returns the normalized hash, or None if invalid. Shared by the delete
+    tool and its confirmation-prompt formatter so they can never disagree
+    on what counts as a valid hash.
+    """
+    if not isinstance(value, str):
+        return None
+    candidate = value.strip().lower()
+    if len(candidate) != 40 or not all(c in "0123456789abcdef" for c in candidate):
+        return None
+    return candidate
+
+
 async def login(client: httpx.AsyncClient, base_url: str, settings: Settings) -> None:
     password = settings.qbittorrent_password
     if password is None:

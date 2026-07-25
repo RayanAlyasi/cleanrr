@@ -229,6 +229,11 @@ async def test_get_show_status_partial_with_queue(
     try:
         result = await get_show_status.handler({"title": "The Bear"})
         assert "22 of 30 episodes ready, 2 downloading" in result["content"][0]["text"]
+
+        # Regression: Sonarr's queue endpoint only filters on the plural,
+        # array-bound "seriesIds" — "seriesId" is silently ignored server-side.
+        queue_call = mock_sonarr_client.get.call_args_list[1]
+        assert queue_call.kwargs["params"]["seriesIds"] == [2]
     finally:
         current_telegram_user_id.reset(token)
 
@@ -371,6 +376,108 @@ async def test_get_show_status_queue_fetch_fails_still_returns_series(
 
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "Fallback Test"})
+        assert "10 of 20 episodes ready" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_queue_malformed_json_still_returns_series(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Fallback Test", "status": 5, "tvdbId": 222},
+            }
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = [
+        {
+            "id": 5,
+            "title": "Fallback Test",
+            "statistics": {"episodeCount": 20, "episodeFileCount": 10},
+        }
+    ]
+
+    queue_resp = MagicMock()
+    queue_resp.status_code = 200
+    queue_resp.json.side_effect = ValueError("bad json")
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
+
+    tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
+    get_show_status = tools[0]
+
+    token = current_telegram_user_id.set(1)
+    try:
+        result = await get_show_status.handler({"title": "Fallback Test"})
+        assert "10 of 20 episodes ready" in result["content"][0]["text"]
+    finally:
+        current_telegram_user_id.reset(token)
+
+
+@pytest.mark.asyncio
+async def test_get_show_status_queue_fetch_raises_still_returns_series(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_link = AsyncMock(return_value="alice")
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Fallback Test", "status": 5, "tvdbId": 222},
+            }
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = [
+        {
+            "id": 5,
+            "title": "Fallback Test",
+            "statistics": {"episodeCount": 20, "episodeFileCount": 10},
+        }
+    ]
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.side_effect = [series_resp, httpx.ConnectError("boom")]
 
     tools = build_tools(mock_sonarr_client, mock_overseerr_client, mock_identity, settings)
     get_show_status = tools[0]
