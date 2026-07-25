@@ -142,6 +142,11 @@ class Agent:
         system_prompt: str | None = None,
         timeout_seconds: float,
         telegram_bot: telegram.Bot | None = None,
+        overseerr_client: httpx.AsyncClient | None = None,
+        sonarr_client: httpx.AsyncClient | None = None,
+        radarr_client: httpx.AsyncClient | None = None,
+        qbit_client: httpx.AsyncClient | None = None,
+        confirmation_registry: ConfirmationRegistry | None = None,
     ) -> None:
         self._identity = identity
         self._settings = settings
@@ -151,10 +156,18 @@ class Agent:
         )
         self._timeout_seconds = timeout_seconds
         self._telegram_bot = telegram_bot
+        # These four clients and the registry are constructed and owned at the
+        # bot level (cleanrr/bot.py), not here — Agent only holds references.
+        # Bot-level ownership means Agent's own reconnect path (see respond())
+        # no longer wastefully rebuilds them on every SDK reconnect, and a
+        # future multi-Agent pool can share one copy across every user.
+        self._overseerr_client = overseerr_client
+        self._sonarr_client = sonarr_client
+        self._radarr_client = radarr_client
+        self._qbit_client = qbit_client
+        self._confirmation_registry = confirmation_registry
         self._client: ClaudeSDKClient | None = None
         self._stack: AsyncExitStack | None = None
-        self._confirmation_registry: ConfirmationRegistry | None = None
-        self._overseerr_client: httpx.AsyncClient | None = None
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
         self._lock = asyncio.Lock()
@@ -172,44 +185,10 @@ class Agent:
             return
         stack = AsyncExitStack()
         settings = self._settings
-
-        overseerr_client: httpx.AsyncClient | None = None
-        if settings.overseerr_url is not None and settings.overseerr_api_key is not None:
-            overseerr_client = await stack.enter_async_context(
-                httpx.AsyncClient(
-                    headers={"X-Api-Key": settings.overseerr_api_key.get_secret_value()},
-                    timeout=settings.overseerr_timeout_seconds,
-                )
-            )
-        self._overseerr_client = overseerr_client
-
-        sonarr_client: httpx.AsyncClient | None = None
-        if settings.sonarr_url is not None and settings.sonarr_api_key is not None:
-            sonarr_client = await stack.enter_async_context(
-                httpx.AsyncClient(
-                    headers={"X-Api-Key": settings.sonarr_api_key.get_secret_value()},
-                    timeout=settings.sonarr_timeout_seconds,
-                )
-            )
-
-        radarr_client: httpx.AsyncClient | None = None
-        if settings.radarr_url is not None and settings.radarr_api_key is not None:
-            radarr_client = await stack.enter_async_context(
-                httpx.AsyncClient(
-                    headers={"X-Api-Key": settings.radarr_api_key.get_secret_value()},
-                    timeout=settings.radarr_timeout_seconds,
-                )
-            )
-
-        qbit_client: httpx.AsyncClient | None = None
-        if (
-            settings.qbittorrent_url is not None
-            and settings.qbittorrent_username is not None
-            and settings.qbittorrent_password is not None
-        ):
-            qbit_client = await stack.enter_async_context(
-                httpx.AsyncClient(timeout=settings.qbittorrent_timeout_seconds)
-            )
+        overseerr_client = self._overseerr_client
+        sonarr_client = self._sonarr_client
+        radarr_client = self._radarr_client
+        qbit_client = self._qbit_client
 
         tools = (
             build_overseerr_tools(
@@ -219,14 +198,7 @@ class Agent:
             else []
         )
 
-        if (
-            sonarr_client is not None
-            and overseerr_client is not None
-            and settings.sonarr_url is not None
-            and settings.sonarr_api_key is not None
-            and settings.overseerr_url is not None
-            and settings.overseerr_api_key is not None
-        ):
+        if sonarr_client is not None and overseerr_client is not None:
             sonarr_tools = build_sonarr_tools(
                 sonarr_client,
                 overseerr_client,
@@ -236,14 +208,7 @@ class Agent:
             )
             tools.extend(sonarr_tools)
 
-        if (
-            radarr_client is not None
-            and overseerr_client is not None
-            and settings.radarr_url is not None
-            and settings.radarr_api_key is not None
-            and settings.overseerr_url is not None
-            and settings.overseerr_api_key is not None
-        ):
+        if radarr_client is not None and overseerr_client is not None:
             radarr_tools = build_radarr_tools(
                 radarr_client,
                 overseerr_client,
@@ -303,10 +268,8 @@ class Agent:
         self._options.strict_mcp_config = True
 
         if self._telegram_bot is not None:
-            self._confirmation_registry = ConfirmationRegistry(
-                ttl_seconds=settings.confirmation_ttl_seconds
-            )
-            await self._confirmation_registry.start()
+            if self._confirmation_registry is None:
+                raise ValueError("confirmation_registry is required when telegram_bot is set")
             formatters = build_confirmation_formatters(overseerr_client, qbit_client, settings)
             self._options.can_use_tool = make_can_use_tool(
                 self._telegram_bot,
@@ -323,10 +286,6 @@ class Agent:
     async def stop(self) -> None:
         if self._stack is None:
             return
-        if self._confirmation_registry is not None:
-            await self._confirmation_registry.stop()
-            self._confirmation_registry = None
-        self._overseerr_client = None
         await self._stack.aclose()
         self._stack = None
         self._client = None

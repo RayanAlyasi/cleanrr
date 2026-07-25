@@ -6,7 +6,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from cleanrr.agent import Agent
-from cleanrr.bot import _on_shutdown, _on_startup, build_application, configure_logging
+from cleanrr.bot import (
+    _CONFIRMATION_REGISTRY_KEY,
+    _OVERSEERR_CLIENT_KEY,
+    _QBIT_CLIENT_KEY,
+    _RADARR_CLIENT_KEY,
+    _SONARR_CLIENT_KEY,
+    _on_shutdown,
+    _on_startup,
+    build_application,
+    configure_logging,
+)
 from cleanrr.config import Settings
 from cleanrr.handlers import (
     AGENT_KEY,
@@ -44,9 +54,21 @@ async def test_on_shutdown_clears_credentials_even_when_stop_fails(
     agent.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
     identity = MagicMock()
     identity.stop = AsyncMock()
+    registry = MagicMock()
+    registry.stop = AsyncMock()
+    overseerr_client = MagicMock()
+    overseerr_client.aclose = AsyncMock()
 
     app = MagicMock()
-    app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity}
+    app.bot_data = {
+        AGENT_KEY: agent,
+        IDENTITY_KEY: identity,
+        _CONFIRMATION_REGISTRY_KEY: registry,
+        _OVERSEERR_CLIENT_KEY: overseerr_client,
+        _SONARR_CLIENT_KEY: None,
+        _RADARR_CLIENT_KEY: None,
+        _QBIT_CLIENT_KEY: None,
+    }
 
     with (
         patch("cleanrr.bot.clear_sdk_credentials") as mock_clear,
@@ -55,6 +77,9 @@ async def test_on_shutdown_clears_credentials_even_when_stop_fails(
     ):
         await _on_shutdown(app)
 
+    identity.stop.assert_awaited_once()
+    registry.stop.assert_awaited_once()
+    overseerr_client.aclose.assert_awaited_once()
     mock_clear.assert_called_once()
     assert "shutting down" in caplog.text
 
@@ -72,15 +97,23 @@ async def test_on_startup_starts_agent_and_identity() -> None:
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
     settings = _make_settings(metrics_enabled=False)
 
     app = MagicMock()
-    app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot_data = {
+        AGENT_KEY: agent,
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        _CONFIRMATION_REGISTRY_KEY: registry,
+    }
     app.bot.set_my_commands = AsyncMock()
 
     with patch("cleanrr.bot.metrics.start") as mock_metrics_start:
         await _on_startup(app)
 
+    registry.start.assert_awaited_once()
     agent.start.assert_awaited_once()
     identity.start.assert_awaited_once()
     app.bot.set_my_commands.assert_awaited_once()
@@ -94,10 +127,17 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=7)
+    registry = MagicMock()
+    registry.start = AsyncMock()
     settings = _make_settings(metrics_enabled=True, metrics_port=9200)
 
     app = MagicMock()
-    app.bot_data = {AGENT_KEY: agent, IDENTITY_KEY: identity, SETTINGS_KEY: settings}
+    app.bot_data = {
+        AGENT_KEY: agent,
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        _CONFIRMATION_REGISTRY_KEY: registry,
+    }
     app.bot.set_my_commands = AsyncMock()
 
     with (

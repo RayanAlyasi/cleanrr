@@ -10,8 +10,15 @@ from claude_agent_sdk import AssistantMessage, TextBlock
 from pydantic import HttpUrl, SecretStr
 
 from cleanrr.agent import Agent
+from cleanrr.bot import (
+    _build_overseerr_client,
+    _build_qbit_client,
+    _build_radarr_client,
+    _build_sonarr_client,
+)
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.permissions import ConfirmationRegistry
 from cleanrr.tools._context import current_telegram_user_id
 
 
@@ -22,6 +29,32 @@ def settings_with_overseerr() -> Settings:
         anthropic_api_key=SecretStr("sk-test"),
         overseerr_url=HttpUrl("http://overseerr:5055"),
         overseerr_api_key=SecretStr("ov-key"),
+    )
+
+
+def _make_agent(
+    settings: Settings,
+    *,
+    telegram_bot: Any = None,
+    identity: Any = None,
+    timeout_seconds: float = 5.0,
+) -> Agent:
+    """Build an Agent the same way bot.py does — client construction driven
+    by settings, injected rather than left for Agent.start() to build."""
+    return Agent(
+        identity=identity or MagicMock(spec=Identity),
+        settings=settings,
+        timeout_seconds=timeout_seconds,
+        telegram_bot=telegram_bot,
+        overseerr_client=_build_overseerr_client(settings),
+        sonarr_client=_build_sonarr_client(settings),
+        radarr_client=_build_radarr_client(settings),
+        qbit_client=_build_qbit_client(settings),
+        confirmation_registry=(
+            ConfirmationRegistry(ttl_seconds=settings.confirmation_ttl_seconds)
+            if telegram_bot is not None
+            else None
+        ),
     )
 
 
@@ -40,12 +73,7 @@ def _collect_allowed_tools(settings: Settings, *, telegram_bot: Any = None) -> l
             return None
 
     async def _run() -> list[str]:
-        agent = Agent(
-            identity=MagicMock(spec=Identity),
-            settings=settings,
-            timeout_seconds=5.0,
-            telegram_bot=telegram_bot,
-        )
+        agent = _make_agent(settings, telegram_bot=telegram_bot)
         with patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient):
             await agent.start()
             await agent.stop()
@@ -74,12 +102,7 @@ def _collect_registered_tool_names(settings: Settings, *, telegram_bot: Any = No
         return {"type": "sdk", "name": name, "instance": MagicMock()}
 
     async def _run() -> list[str]:
-        agent = Agent(
-            identity=MagicMock(spec=Identity),
-            settings=settings,
-            timeout_seconds=5.0,
-            telegram_bot=telegram_bot,
-        )
+        agent = _make_agent(settings, telegram_bot=telegram_bot)
         with (
             patch("cleanrr.agent.ClaudeSDKClient", _FakeSDKClient),
             patch("cleanrr.agent.create_sdk_mcp_server", _fake_create_sdk_mcp_server),
@@ -116,7 +139,7 @@ async def test_start_wires_mcp_when_overseerr_configured(monkeypatch: pytest.Mon
         overseerr_url=HttpUrl("http://overseerr:5055"),
         overseerr_api_key=SecretStr("ov-key"),
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -153,7 +176,7 @@ async def test_start_twice_is_a_noop(monkeypatch: pytest.MonkeyPatch) -> None:
     settings = Settings(
         telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
 
     await agent.start()
     await agent.start()
@@ -167,7 +190,7 @@ async def test_stop_before_start_is_a_noop() -> None:
     settings = Settings(
         telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
 
     await agent.stop()  # must not raise
 
@@ -177,7 +200,7 @@ async def test_respond_before_start_raises() -> None:
     settings = Settings(
         telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
 
     with pytest.raises(RuntimeError, match=r"Agent\.start"):
         await agent.respond(telegram_user_id=1, prompt="hello")
@@ -207,7 +230,7 @@ async def test_start_with_no_overseerr_config_registers_no_tools(
     settings = Settings(
         telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -246,7 +269,7 @@ async def test_start_registers_sonarr_tools_when_both_configured(
         sonarr_url=HttpUrl("http://sonarr:8989"),
         sonarr_api_key=SecretStr("sonarr-key"),
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -282,7 +305,7 @@ async def test_start_skips_sonarr_tools_when_overseerr_missing(
         sonarr_url=HttpUrl("http://sonarr:8989"),
         sonarr_api_key=SecretStr("sonarr-key"),
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -320,7 +343,7 @@ async def test_start_registers_radarr_tools_when_both_configured(
         radarr_url=HttpUrl("http://radarr:7878"),
         radarr_api_key=SecretStr("radarr-key"),
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -356,7 +379,7 @@ async def test_start_skips_radarr_tools_when_overseerr_missing(
         radarr_url=HttpUrl("http://radarr:7878"),
         radarr_api_key=SecretStr("radarr-key"),
     )
-    agent = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
@@ -470,12 +493,7 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
         overseerr_api_key=SecretStr("ov-key"),
     )
     bot = MagicMock()
-    agent = Agent(
-        identity=MagicMock(spec=Identity),
-        settings=settings,
-        timeout_seconds=5.0,
-        telegram_bot=bot,
-    )
+    agent = _make_agent(settings, telegram_bot=bot)
     await agent.start()
 
     opts = captured_options["options"]
@@ -489,9 +507,10 @@ async def test_start_wires_can_use_tool_when_telegram_bot_provided(
     assert agent.overseerr_client is not None
 
     await agent.stop()
-    # Registry and Overseerr client torn down on stop()
-    assert agent.confirmation_registry is None
-    assert agent.overseerr_client is None
+    # Registry and Overseerr client are injected, bot-level resources now —
+    # Agent doesn't own their lifecycle, so stop() must leave them as-is.
+    assert agent.confirmation_registry is not None
+    assert agent.overseerr_client is not None
 
 
 def test_start_registers_write_tool_without_auto_approving_it(
@@ -559,11 +578,7 @@ async def test_start_skips_write_tools_when_no_telegram_bot(
         overseerr_url=HttpUrl("http://overseerr:5055"),
         overseerr_api_key=SecretStr("ov-key"),
     )
-    agent = Agent(
-        identity=MagicMock(spec=Identity),
-        settings=settings,
-        timeout_seconds=5.0,
-    )
+    agent = _make_agent(settings)
     await agent.start()
 
     opts = captured_options["options"]
