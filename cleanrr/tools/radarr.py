@@ -23,6 +23,8 @@ def build_tools(
     overseerr_client: httpx.AsyncClient,
     identity: Identity,
     settings: Settings,
+    *,
+    telegram_user_id: int,
     telegram_bot: telegram.Bot | None = None,
 ) -> list[SdkMcpTool]:
     """Factory for Radarr tools."""
@@ -47,7 +49,12 @@ def build_tools(
             )
 
         lookup = await find_user_request(
-            overseerr_client, identity, settings, title_input, telegram_bot=telegram_bot
+            overseerr_client,
+            identity,
+            settings,
+            title_input,
+            telegram_user_id=telegram_user_id,
+            telegram_bot=telegram_bot,
         )
 
         error_response = render_lookup_error(lookup, title_input)
