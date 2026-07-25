@@ -54,7 +54,7 @@ async def test_get_or_create_starts_a_new_agent_for_new_user() -> None:
         agent = await pool.get_or_create(1)
 
     assert agent is not None
-    agent.start.assert_awaited_once_with(1)
+    agent.start.assert_awaited_once_with(1)  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
@@ -164,8 +164,10 @@ async def test_stop_stops_every_agent_and_clears_pool() -> None:
 
         await pool.stop()
 
-    agent_1.stop.assert_awaited_once()
-    agent_2.stop.assert_awaited_once()
+    assert agent_1 is not None
+    assert agent_2 is not None
+    agent_1.stop.assert_awaited_once()  # type: ignore[attr-defined]
+    agent_2.stop.assert_awaited_once()  # type: ignore[attr-defined]
 
 
 @pytest.mark.asyncio
