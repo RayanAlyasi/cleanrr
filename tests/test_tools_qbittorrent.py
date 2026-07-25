@@ -7,7 +7,6 @@ import httpx
 import pytest
 
 from cleanrr.config import Settings
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.qbittorrent import _format_age, build_tools
 
 
@@ -41,7 +40,7 @@ def settings() -> Settings:
 @pytest.mark.asyncio
 async def test_not_configured_url_none(mock_qbit_client: AsyncMock) -> None:
     s = _settings(qbittorrent_url=None)
-    tools = build_tools(mock_qbit_client, s)
+    tools = build_tools(mock_qbit_client, s, telegram_user_id=1)
     tool = tools[0]
 
     result = await tool.handler({})
@@ -52,7 +51,7 @@ async def test_not_configured_url_none(mock_qbit_client: AsyncMock) -> None:
 @pytest.mark.asyncio
 async def test_not_configured_username_none(mock_qbit_client: AsyncMock) -> None:
     s = _settings(qbittorrent_username=None)
-    tools = build_tools(mock_qbit_client, s)
+    tools = build_tools(mock_qbit_client, s, telegram_user_id=1)
     tool = tools[0]
 
     result = await tool.handler({})
@@ -63,7 +62,7 @@ async def test_not_configured_username_none(mock_qbit_client: AsyncMock) -> None
 @pytest.mark.asyncio
 async def test_not_configured_password_none(mock_qbit_client: AsyncMock) -> None:
     s = _settings(qbittorrent_password=None)
-    tools = build_tools(mock_qbit_client, s)
+    tools = build_tools(mock_qbit_client, s, telegram_user_id=1)
     tool = tools[0]
 
     result = await tool.handler({})
@@ -72,42 +71,24 @@ async def test_not_configured_password_none(mock_qbit_client: AsyncMock) -> None
 
 
 @pytest.mark.asyncio
-async def test_context_missing(mock_qbit_client: AsyncMock, settings: Settings) -> None:
-    tools = build_tools(mock_qbit_client, settings)
+async def test_not_admin(mock_qbit_client: AsyncMock, settings: Settings) -> None:
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=999)
     tool = tools[0]
 
     result = await tool.handler({})
-    assert result["is_error"] is True
-    assert "Internal error" in result["content"][0]["text"]
-
-
-@pytest.mark.asyncio
-async def test_not_admin(mock_qbit_client: AsyncMock, settings: Settings) -> None:
-    tools = build_tools(mock_qbit_client, settings)
-    tool = tools[0]
-
-    token = current_telegram_user_id.set(999)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-        assert "admin" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    assert result["is_error"] is False
+    assert "admin" in result["content"][0]["text"].lower()
 
 
 @pytest.mark.asyncio
 async def test_empty_admin_ids_blocks_all(mock_qbit_client: AsyncMock) -> None:
     s = _settings(admin_telegram_ids=set())
-    tools = build_tools(mock_qbit_client, s)
+    tools = build_tools(mock_qbit_client, s, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-        assert "admin" in result["content"][0]["text"].lower()
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is False
+    assert "admin" in result["content"][0]["text"].lower()
 
 
 # ── Auth paths ────────────────────────────────────────────────────────────────
@@ -119,16 +100,12 @@ async def test_auth_failed_non_ok_login(mock_qbit_client: AsyncMock, settings: S
     login_resp.status_code = 403
     mock_qbit_client.post.return_value = login_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent auth failed" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent auth failed" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -140,16 +117,12 @@ async def test_auth_failed_wrong_password_body(
     login_resp.text = "Fails."
     mock_qbit_client.post.return_value = login_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent auth failed" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent auth failed" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -167,15 +140,11 @@ async def test_login_succeeds_on_204_empty_body(
     mock_qbit_client.post.return_value = login_resp
     mock_qbit_client.get.return_value = torrents_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is False
 
 
 @pytest.mark.asyncio
@@ -187,16 +156,12 @@ async def test_auth_failed_on_401(mock_qbit_client: AsyncMock, settings: Setting
     login_resp.text = "Unauthorized"
     mock_qbit_client.post.return_value = login_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent auth failed" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent auth failed" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -205,15 +170,11 @@ async def test_auth_failed_http_exception_on_login(
 ) -> None:
     mock_qbit_client.post.side_effect = httpx.ConnectError("refused")
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
 
 
 # ── HTTP / parse paths ────────────────────────────────────────────────────────
@@ -233,16 +194,12 @@ async def test_http_error_on_torrents_fetch(
     mock_qbit_client.post.return_value = _make_login_ok()
     mock_qbit_client.get.side_effect = httpx.ConnectError("refused")
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent unreachable" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent unreachable" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -252,16 +209,12 @@ async def test_non_200_on_torrents_fetch(mock_qbit_client: AsyncMock, settings: 
     torrent_resp.status_code = 500
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent unreachable" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent unreachable" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -272,16 +225,12 @@ async def test_parse_error_bad_json(mock_qbit_client: AsyncMock, settings: Setti
     torrent_resp.json.side_effect = ValueError("bad json")
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "Unexpected response" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "Unexpected response" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -292,16 +241,12 @@ async def test_parse_error_not_a_list(mock_qbit_client: AsyncMock, settings: Set
     torrent_resp.json.return_value = {"error": "unexpected"}
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "Unexpected response" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "Unexpected response" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -319,16 +264,12 @@ async def test_403_triggers_retry_then_auth_fails(
     mock_qbit_client.post.side_effect = [first_login, second_login]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "qBittorrent auth failed" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "qBittorrent auth failed" in result["content"][0]["text"]
 
 
 # ── Success paths ─────────────────────────────────────────────────────────────
@@ -364,16 +305,12 @@ async def test_success_no_stalled_torrents(mock_qbit_client: AsyncMock, settings
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-        assert "No stalled" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is False
+    assert "No stalled" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -390,19 +327,15 @@ async def test_success_filters_to_stalled_states(
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        assert "Stalled One" in text
-        assert "Meta One" in text
-        assert "Active One" not in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    assert "Stalled One" in text
+    assert "Meta One" in text
+    assert "Active One" not in text
 
 
 @pytest.mark.asyncio
@@ -422,19 +355,15 @@ async def test_success_flags_error_and_missing_files_states(
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        assert "Broken One" in text
-        assert "Missing Files One" in text
-        assert "Active One" not in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    assert "Broken One" in text
+    assert "Missing Files One" in text
+    assert "Active One" not in text
 
 
 @pytest.mark.asyncio
@@ -446,18 +375,14 @@ async def test_success_caps_at_10_entries(mock_qbit_client: AsyncMock, settings:
     torrent_resp.json.return_value = torrents
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        shown = sum(1 for i in range(15) if f"Torrent {i}" in text)
-        assert shown == 10
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    shown = sum(1 for i in range(15) if f"Torrent {i}" in text)
+    assert shown == 10
 
 
 @pytest.mark.asyncio
@@ -477,18 +402,14 @@ async def test_success_output_includes_size_and_progress(
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        assert "Big Film" in text
-        assert "50%" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    assert "Big Film" in text
+    assert "50%" in text
 
 
 @pytest.mark.asyncio
@@ -511,17 +432,13 @@ async def test_success_age_uses_last_activity(
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        assert "2m" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    assert "2m" in text
 
 
 @pytest.mark.asyncio
@@ -544,17 +461,13 @@ async def test_success_age_falls_back_to_added_on(
     ]
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        text = result["content"][0]["text"]
-        assert result["is_error"] is False
-        assert "1h" in text
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    text = result["content"][0]["text"]
+    assert result["is_error"] is False
+    assert "1h" in text
 
 
 @pytest.mark.asyncio
@@ -587,16 +500,12 @@ async def test_success_retry_after_403_on_torrents(
     mock_qbit_client.post.side_effect = [first_login, second_login]
     mock_qbit_client.get.side_effect = [first_torrent_resp, second_torrent_resp]
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-        assert "Stalled Film" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is False
+    assert "Stalled Film" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -610,16 +519,12 @@ async def test_http_error_on_retry_after_reauth(
     mock_qbit_client.post.return_value = _make_login_ok()
     mock_qbit_client.get.side_effect = [first_torrent_resp, httpx.ConnectError("boom")]
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "unreachable" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "unreachable" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -637,16 +542,12 @@ async def test_parse_error_on_retry_after_reauth(
     mock_qbit_client.post.return_value = _make_login_ok()
     mock_qbit_client.get.side_effect = [first_torrent_resp, second_torrent_resp]
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "Unexpected response" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "Unexpected response" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -663,16 +564,12 @@ async def test_still_403_after_reauth_reports_auth_failure_not_empty(
     mock_qbit_client.post.return_value = _make_login_ok()
     mock_qbit_client.get.side_effect = [first_torrent_resp, second_torrent_resp]
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is True
-        assert "auth failed" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is True
+    assert "auth failed" in result["content"][0]["text"]
 
 
 @pytest.mark.asyncio
@@ -683,16 +580,12 @@ async def test_success_empty_list(mock_qbit_client: AsyncMock, settings: Setting
     torrent_resp.json.return_value = []
     mock_qbit_client.get.return_value = torrent_resp
 
-    tools = build_tools(mock_qbit_client, settings)
+    tools = build_tools(mock_qbit_client, settings, telegram_user_id=42)
     tool = tools[0]
 
-    token = current_telegram_user_id.set(42)
-    try:
-        result = await tool.handler({})
-        assert result["is_error"] is False
-        assert "No stalled" in result["content"][0]["text"]
-    finally:
-        current_telegram_user_id.reset(token)
+    result = await tool.handler({})
+    assert result["is_error"] is False
+    assert "No stalled" in result["content"][0]["text"]
 
 
 # ── _format_age helper ────────────────────────────────────────────────────────
