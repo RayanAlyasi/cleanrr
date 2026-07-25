@@ -23,7 +23,6 @@ from cleanrr.permissions import (
     build_confirmation_formatters,
     make_can_use_tool,
 )
-from cleanrr.tools._context import current_telegram_user_id
 from cleanrr.tools.overseerr import build_tools as build_overseerr_tools
 from cleanrr.tools.overseerr_write import build_tools as build_overseerr_write_tools
 from cleanrr.tools.qbittorrent import build_tools as build_qbittorrent_tools
@@ -131,7 +130,12 @@ Three tiers of content. Treat them differently.
 
 
 class Agent:
-    """Long-lived wrapper around ClaudeSDKClient that routes per-user messages by session_id."""
+    """Long-lived wrapper around a ClaudeSDKClient dedicated to one Telegram user.
+
+    One Agent == one CLI subprocess == one user. AgentPool owns a dict of
+    these, created lazily per telegram_user_id, so a confirmation prompt
+    pending on one user's Agent can never block another user's respond().
+    """
 
     def __init__(
         self,
@@ -167,6 +171,7 @@ class Agent:
         self._qbit_client = qbit_client
         self._confirmation_registry = confirmation_registry
         self._client: ClaudeSDKClient | None = None
+        self._telegram_user_id: int | None = None
         self._stack: AsyncExitStack | None = None
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
@@ -180,7 +185,8 @@ class Agent:
     def overseerr_client(self) -> httpx.AsyncClient | None:
         return self._overseerr_client
 
-    async def start(self) -> None:
+    async def start(self, telegram_user_id: int) -> None:
+        self._telegram_user_id = telegram_user_id
         if self._client is not None:
             return
         stack = AsyncExitStack()
@@ -192,7 +198,11 @@ class Agent:
 
         tools = (
             build_overseerr_tools(
-                overseerr_client, self._identity, settings, telegram_bot=self._telegram_bot
+                overseerr_client,
+                self._identity,
+                settings,
+                telegram_user_id=telegram_user_id,
+                telegram_bot=self._telegram_bot,
             )
             if overseerr_client is not None
             else []
@@ -204,6 +214,7 @@ class Agent:
                 overseerr_client,
                 self._identity,
                 settings,
+                telegram_user_id=telegram_user_id,
                 telegram_bot=self._telegram_bot,
             )
             tools.extend(sonarr_tools)
@@ -214,19 +225,30 @@ class Agent:
                 overseerr_client,
                 self._identity,
                 settings,
+                telegram_user_id=telegram_user_id,
                 telegram_bot=self._telegram_bot,
             )
             tools.extend(radarr_tools)
 
         if qbit_client is not None:
-            qbit_tools = build_qbittorrent_tools(qbit_client, settings)
+            qbit_tools = build_qbittorrent_tools(
+                qbit_client, settings, telegram_user_id=telegram_user_id
+            )
             tools.extend(qbit_tools)
 
         if overseerr_client is not None and self._telegram_bot is not None:
-            tools.extend(build_overseerr_write_tools(overseerr_client, self._identity, settings))
+            tools.extend(
+                build_overseerr_write_tools(
+                    overseerr_client, self._identity, settings, telegram_user_id=telegram_user_id
+                )
+            )
 
         if qbit_client is not None and self._telegram_bot is not None:
-            tools.extend(build_qbittorrent_write_tools(qbit_client, settings))
+            tools.extend(
+                build_qbittorrent_write_tools(
+                    qbit_client, settings, telegram_user_id=telegram_user_id
+                )
+            )
 
         if (
             radarr_client is not None
@@ -239,6 +261,7 @@ class Agent:
                     overseerr_client,
                     self._identity,
                     settings,
+                    telegram_user_id=telegram_user_id,
                     telegram_bot=self._telegram_bot,
                 )
             )
@@ -254,6 +277,7 @@ class Agent:
                     overseerr_client,
                     self._identity,
                     settings,
+                    telegram_user_id=telegram_user_id,
                     telegram_bot=self._telegram_bot,
                 )
             )
@@ -276,6 +300,7 @@ class Agent:
                 self._confirmation_registry,
                 settings,
                 formatters,
+                telegram_user_id=telegram_user_id,
             )
         else:
             self._options.permission_mode = "dontAsk"
@@ -290,9 +315,11 @@ class Agent:
         self._stack = None
         self._client = None
 
-    async def respond(self, *, telegram_user_id: int, prompt: str) -> str:
+    async def respond(self, *, prompt: str) -> str:
         if self._client is None:
             raise RuntimeError("Agent.start() must be called before respond()")
+        telegram_user_id = self._telegram_user_id
+        assert telegram_user_id is not None  # set alongside self._client in start()
 
         session_id = f"telegram_{telegram_user_id}"
 
@@ -308,38 +335,26 @@ class Agent:
 
         # Bound lock acquisition so a prior query that swallowed CancelledError
         # on timeout (leaving the inner wait_for blocked and the lock held) can't
-        # wedge subsequent users forever — they get a graceful TimeoutError
-        # instead of hanging. Same bound as the query itself, so the user-facing
-        # error is identical either way.
+        # wedge subsequent calls forever — they get a graceful TimeoutError
+        # instead of hanging.
         await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
         try:
-            # current_telegram_user_id must be set/reset strictly inside the
-            # held lock: with concurrent_updates(True), a second user's respond()
-            # call starts running immediately and would otherwise clobber this
-            # value while the first query is still in flight (it's plain shared
-            # state, not a per-task ContextVar — see tools/_context.py).
-            token = current_telegram_user_id.set(telegram_user_id)
             try:
-                try:
-                    return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
-                except ClaudeSDKError:
-                    # The CLI subprocess this client fronts has died (crash, OOM,
-                    # transient resource pressure) — the SDK never respawns it, so
-                    # without this every future message would fail forever until
-                    # someone manually restarts the process. One reconnect attempt
-                    # before giving up; if this also fails, it propagates and the
-                    # caller gets the same graceful "couldn't reach Claude" reply.
-                    logger.exception("SDK connection lost mid-query — reconnecting")
+                return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+            except ClaudeSDKError:
+                # The CLI subprocess this client fronts has died (crash, OOM,
+                # transient resource pressure) — the SDK never respawns it, so
+                # without this every future message would fail forever until
+                # someone manually restarts the process. One reconnect attempt
+                # before giving up; if this also fails, it propagates and the
+                # caller gets the same graceful "couldn't reach Claude" reply.
+                logger.exception("SDK connection lost mid-query — reconnecting")
 
-                    async def _reconnect_and_retry() -> str:
-                        await self.stop()
-                        await self.start()
-                        return await _query()
+                async def _reconnect_and_retry() -> str:
+                    await self.stop()
+                    await self.start(telegram_user_id)
+                    return await _query()
 
-                    return await asyncio.wait_for(
-                        _reconnect_and_retry(), timeout=self._timeout_seconds
-                    )
-            finally:
-                current_telegram_user_id.reset(token)
+                return await asyncio.wait_for(_reconnect_and_retry(), timeout=self._timeout_seconds)
         finally:
             self._lock.release()
