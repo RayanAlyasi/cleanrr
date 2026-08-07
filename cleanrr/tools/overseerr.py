@@ -142,15 +142,16 @@ def build_tools(
                 media = req.get("media", {})
                 req_status = req.get("status")
                 media_status = media.get("status")
+                req_id = req.get("id")
 
                 status_label = _format_status_label(req_status, media_status)
 
                 title = media.get("title") or media.get("name") or "Unknown"
                 year = media.get("releaseYear")
                 if year:
-                    lines.append(f"- {title} ({year}) — {status_label}")
+                    lines.append(f"- {title} ({year}) — {status_label} (request_id: {req_id})")
                 else:
-                    lines.append(f"- {title} — {status_label}")
+                    lines.append(f"- {title} — {status_label} (request_id: {req_id})")
 
             metrics.tool_calls_total.labels(tool="list_my_requests", status="success").inc()
             return text_result("\n".join(lines), is_error=False)
@@ -198,13 +199,16 @@ def build_tools(
         req_status = lookup.request.get("status")
         media_status = media.get("status")
         status_label = _format_status_label(req_status, media_status)
+        req_id = lookup.request.get("id")
 
         title = media.get("title") or media.get("name")
         year = media.get("releaseYear")
         if year:
-            result_text = f"Your request for {title} ({year}): {status_label}."
+            result_text = (
+                f"Your request for {title} ({year}): {status_label}. (request_id: {req_id})"
+            )
         else:
-            result_text = f"Your request for {title}: {status_label}."
+            result_text = f"Your request for {title}: {status_label}. (request_id: {req_id})"
 
         return text_result(result_text, is_error=False)
 
