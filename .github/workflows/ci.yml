@@ -95,6 +95,8 @@ jobs:
         run: pip install semgrep
 
       - name: Scan for known security holes (semgrep)
-        # Free Community ruleset — no SEMGREP_APP_TOKEN / semgrep.dev account
-        # required. --metrics=off keeps this fully local, no telemetry.
-        run: semgrep ci --config=p/ci --metrics=off
+        # --config=p/ci: free Community ruleset, no SEMGREP_APP_TOKEN needed.
+        # --no-suppress-errors: semgrep ci otherwise exits 0 even when the
+        # scan itself errored (e.g. ruleset fetch failure), which would let
+        # this gate pass green without having scanned anything.
+        run: semgrep ci --config=p/ci --metrics=off --no-suppress-errors
