@@ -1,5 +1,17 @@
 # Changelog
 
+## [0.6.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.3...v0.6.0) (2026-08-07)
+
+
+### Features
+
+* agent-per-user pool (fixes cross-user confirmation blocking) ([#73](https://github.com/RayanAlyasi/cleanrr/issues/73)) ([3fa890a](https://github.com/RayanAlyasi/cleanrr/commit/3fa890a4cef850b07eb36dab1ccae7e165922400))
+
+
+### Bug Fixes
+
+* expose request_id in list_my_requests/find_my_request ([#76](https://github.com/RayanAlyasi/cleanrr/issues/76)) ([272a671](https://github.com/RayanAlyasi/cleanrr/commit/272a671c4eae38495f73ca535b44d6839c8dcccf))
+
 ## [0.5.3](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.2...v0.5.3) (2026-07-25)
 
 
