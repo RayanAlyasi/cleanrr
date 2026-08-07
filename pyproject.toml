@@ -10,7 +10,7 @@ dependencies = [
     "pydantic-settings>=2.14,<3",
     "claude-agent-sdk>=0.2.82,<0.3",
     "aiosqlite>=0.20,<0.23",
-    "prometheus-client>=0.21,<0.26",
+    "prometheus-client>=0.21,<0.27",
 ]
 
 [project.optional-dependencies]
