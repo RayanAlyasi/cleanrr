@@ -464,6 +464,11 @@ async def test_list_my_requests_formatted_output(
     assert "available" in text
     assert "Breaking Bad" in text
     assert "processing" in text
+    # Regression: without the request_id in the tool output, Claude has no
+    # way to call remove_my_request afterward — it can only describe the
+    # request, never act on it.
+    assert "request_id: 1" in text
+    assert "request_id: 2" in text
 
 
 @pytest.mark.asyncio
@@ -672,6 +677,10 @@ async def test_find_request_exact_match(
     text = result["content"][0]["text"]
     assert "Dune Part One" in text
     assert "available" in text
+    # Regression: without the request_id in the tool output, Claude has no
+    # way to call remove_my_request afterward — it can only describe the
+    # request, never act on it.
+    assert "request_id: 1" in text
 
 
 @pytest.mark.asyncio
