@@ -1,5 +1,33 @@
 # Changelog
 
+## [0.7.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.6.0...v0.7.0) (2026-08-08)
+
+
+### Features
+
+* sign release images with cosign (keyless) ([#84](https://github.com/RayanAlyasi/cleanrr/issues/84)) ([b124ef6](https://github.com/RayanAlyasi/cleanrr/commit/b124ef6c51d6b02a6de978730bae09672d3766e9))
+
+
+### Bug Fixes
+
+* add signoff to release-please's generated commits ([#90](https://github.com/RayanAlyasi/cleanrr/issues/90)) ([b4219ce](https://github.com/RayanAlyasi/cleanrr/commit/b4219ceb7ca7a99233232540440423d242369e74))
+* add top-level permissions to codeql.yml, release.yml ([#82](https://github.com/RayanAlyasi/cleanrr/issues/82)) ([8cc7832](https://github.com/RayanAlyasi/cleanrr/commit/8cc78325ac1da47b8fd0bb3a44caddf020e592aa))
+* enable pyright strict mode ([#92](https://github.com/RayanAlyasi/cleanrr/issues/92)) ([f528a1b](https://github.com/RayanAlyasi/cleanrr/commit/f528a1b876030c9a2e73a7310bb64e402e654ff3))
+* harden CI per OpenSSF Scorecard findings ([#81](https://github.com/RayanAlyasi/cleanrr/issues/81)) ([08bd602](https://github.com/RayanAlyasi/cleanrr/commit/08bd602786b8b9bd34a2f7d559a0d18cd6fffa53))
+* make semgrep job fail closed on scan errors ([#79](https://github.com/RayanAlyasi/cleanrr/issues/79)) ([267e089](https://github.com/RayanAlyasi/cleanrr/commit/267e0890a3d5d69793ab552c877d1fb0e607d74e))
+* scope release-please.yml write permission to job level ([#83](https://github.com/RayanAlyasi/cleanrr/issues/83)) ([487a44d](https://github.com/RayanAlyasi/cleanrr/commit/487a44df06df91a8f1121a1db00d009b33c7a651))
+* strip pip from the runtime image ([#85](https://github.com/RayanAlyasi/cleanrr/issues/85)) ([2b97a67](https://github.com/RayanAlyasi/cleanrr/commit/2b97a6765bcb60cdcd6f005f3c7181f546dcdc87))
+
+
+### Documentation
+
+* add OpenSSF Best Practices badge ([#87](https://github.com/RayanAlyasi/cleanrr/issues/87)) ([6d556f8](https://github.com/RayanAlyasi/cleanrr/commit/6d556f8d1966fe79a3dfb018362cdf198f067d2d))
+* add THREAT_MODEL.md, close OSPS-SA-03.01 ([#89](https://github.com/RayanAlyasi/cleanrr/issues/89)) ([c0353bb](https://github.com/RayanAlyasi/cleanrr/commit/c0353bbfe085ebbb8a14018c7066aa794fef807b))
+* close doc-only OSPS baseline-3 gaps ([#91](https://github.com/RayanAlyasi/cleanrr/issues/91)) ([8d74e84](https://github.com/RayanAlyasi/cleanrr/commit/8d74e847792e54644eb26b5dab1d38da090bc997))
+* fix stale AgentPool references ([#94](https://github.com/RayanAlyasi/cleanrr/issues/94)) ([a5de202](https://github.com/RayanAlyasi/cleanrr/commit/a5de202a762a9c4a6cdf663036207e3dee3c6bc7))
+* Scorecard badge + highly-visible destructive-action warning ([#86](https://github.com/RayanAlyasi/cleanrr/issues/86)) ([be8c371](https://github.com/RayanAlyasi/cleanrr/commit/be8c371a7c3d7b5c6fd178e53f22fa400eedd174))
+* trim README badge row to 6 ([#93](https://github.com/RayanAlyasi/cleanrr/issues/93)) ([e94e26b](https://github.com/RayanAlyasi/cleanrr/commit/e94e26b7107bf323231a3623af7e3e0bf0df8b12))
+
 ## [0.6.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.5.3...v0.6.0) (2026-08-07)
 
 
