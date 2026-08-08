@@ -1,5 +1,6 @@
 {
   "$schema": "https://raw.githubusercontent.com/googleapis/release-please/main/schemas/config.json",
+  "signoff": "Rayan Alyasi <51235797+RayanAlyasi@users.noreply.github.com>",
   "packages": {
     ".": {
       "release-type": "simple",
