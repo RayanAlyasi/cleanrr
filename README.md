@@ -184,7 +184,8 @@ cleanrr/
 ├── __main__.py        # entrypoint (python -m cleanrr)
 ├── bot.py             # application wiring + lifecycle (startup/shutdown)
 ├── handlers.py        # Telegram command/message/callback handlers
-├── agent.py           # ClaudeSDKClient wrapper with per-user sessions
+├── agent.py           # one Agent = one dedicated Claude subprocess per user
+├── agent_pool.py      # AgentPool: creates/caps one Agent per telegram_user_id
 ├── identity.py        # SQLite link-code store + Telegram↔Overseerr mapping
 ├── metrics.py         # Prometheus metrics (opt-in)
 ├── config.py          # pydantic-settings + auth validation
