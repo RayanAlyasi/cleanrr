@@ -20,7 +20,10 @@ ENV SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 
 COPY pyproject.toml LICENSE README.md ./
 COPY cleanrr ./cleanrr
-RUN pip install .
+# pip isn't needed at runtime; drop it (and its vendored deps, e.g. msgpack)
+# so scanners don't flag CVEs in tooling that's never imported by cleanrr.
+RUN pip install . \
+ && pip uninstall -y pip setuptools wheel
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 cleanrr \
  && mkdir -p /app/data \
