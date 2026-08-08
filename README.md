@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/RayanAlyasi/cleanrr/actions"><img src="https://img.shields.io/github/actions/workflow/status/RayanAlyasi/cleanrr/ci.yml?branch=main" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/RayanAlyasi/cleanrr"><img src="https://api.scorecard.dev/projects/github.com/RayanAlyasi/cleanrr/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/releases"><img src="https://img.shields.io/github/v/release/RayanAlyasi/cleanrr" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/RayanAlyasi/cleanrr" alt="License"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/stargazers"><img src="https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social" alt="Stars"></a>
