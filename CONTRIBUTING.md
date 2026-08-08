@@ -36,6 +36,8 @@ Every PR must pass:
 
 CI runs all of these on every PR. `pre-commit install` runs the fast ones locally before each commit so they rarely fail in CI.
 
+Any PR that adds or changes functionality must add or update tests covering it in the same PR — coverage doesn't happen retroactively.
+
 ## Code style
 
 - Type hints everywhere — pyright runs in strict-ish mode.

@@ -132,6 +132,19 @@ All configuration is via environment variables — no code edits needed. See [`.
 
 Set `METRICS_ENABLED=true` to expose a Prometheus `/metrics` endpoint on `METRICS_PORT` (default `9100`). Import `assets/grafana/cleanrr.json` into Grafana for a ready-made dashboard.
 
+## Verifying release images
+
+Every image published to `ghcr.io/rayanalyasi/cleanrr` is signed keylessly via [Sigstore](https://www.sigstore.dev/)/cosign at release time — no long-lived signing key exists. To verify both the signature and that it was actually built by this repo's own release workflow (not tampered with or republished by someone else):
+
+```bash
+# Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
+cosign verify ghcr.io/rayanalyasi/cleanrr:0.6.0 \
+  --certificate-identity-regexp="^https://github\.com/RayanAlyasi/cleanrr/\.github/workflows/release\.yml@.*$" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+```
+
+A successful verification confirms the image's signature is valid *and* that it was signed by GitHub's OIDC token for this repository's `release.yml` workflow specifically — not just any signature. Signatures and their public transparency-log entries are also independently browsable at [search.sigstore.dev](https://search.sigstore.dev/).
+
 ## Architecture
 
 ```
