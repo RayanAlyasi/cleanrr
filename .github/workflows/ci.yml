@@ -95,8 +95,9 @@ jobs:
         run: pip install semgrep
 
       - name: Scan for known security holes (semgrep)
-        # --config=p/ci: free Community ruleset, no SEMGREP_APP_TOKEN needed.
+        # p/ci: free Community ruleset, no SEMGREP_APP_TOKEN needed.
+        # p/docker-compose: p/ci only covers Dockerfile, not compose files.
         # --no-suppress-errors: semgrep ci otherwise exits 0 even when the
         # scan itself errored (e.g. ruleset fetch failure), which would let
         # this gate pass green without having scanned anything.
-        run: semgrep ci --config=p/ci --metrics=off --no-suppress-errors
+        run: semgrep ci --config=p/ci --config=p/docker-compose --metrics=off --no-suppress-errors
