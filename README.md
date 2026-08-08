@@ -92,35 +92,72 @@ Then DM your bot on Telegram and say hi.
 
 ## Configuration
 
-All configuration is via environment variables — no code edits needed. See [`.env.example`](.env.example) for the full set with comments. Summary:
+All configuration is via environment variables — no code edits needed. Copy [`.env.example`](.env.example) to `.env` and fill it in; groups below match its section order.
+
+### Required
+
+| Variable | Purpose |
+| --- | --- |
+| `TELEGRAM_BOT_TOKEN` | From @BotFather. |
+
+### Authentication — set exactly one
+
+| Variable | Purpose |
+| --- | --- |
+| `CLAUDE_CODE_OAUTH_TOKEN` | Subscription-backed (Claude.ai Pro/Max). Generate via `claude setup-token`. |
+| `ANTHROPIC_API_KEY` | Pay-per-token alternative, no subscription needed. |
+
+### Behavior tuning (all optional)
 
 | Variable | Default | Purpose |
 | --- | --- | --- |
-| `TELEGRAM_BOT_TOKEN` | — | Required. From @BotFather. |
-| `CLAUDE_CODE_OAUTH_TOKEN` | — | Auth option A. Subscription-backed. |
-| `ANTHROPIC_API_KEY` | — | Auth option B. Pay-per-token. |
 | `CLAUDE_MODEL` | `sonnet` | `opus`, `sonnet`, `haiku`, or a full model ID. |
 | `CLAUDE_SYSTEM_PROMPT` | built-in | Override the bot's persona without touching code. |
 | `ADMIN_TELEGRAM_IDS` | — | Comma-separated Telegram user IDs allowed to run `/invite`. |
 | `DATABASE_PATH` | `data/cleanrr.db` | SQLite path for link codes and identity mappings. |
 | `LINK_CODE_TTL_HOURS` | `24` | How long link codes remain valid before expiring. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |
-| `METRICS_ENABLED` | `false` | Expose Prometheus `/metrics` on `METRICS_PORT`. |
+| `METRICS_ENABLED` | `false` | Expose Prometheus `/metrics` on `METRICS_PORT`. See [Metrics](#metrics-optional). |
 | `METRICS_PORT` | `9100` | Port for the Prometheus metrics HTTP endpoint. |
-| `METRICS_BIND_ADDRESS` | `127.0.0.1` | Bind address for Prometheus `/metrics` endpoint. Set to `0.0.0.0` for multi-container scraping. |
+| `METRICS_BIND_ADDRESS` | `127.0.0.1` | Bind address for `/metrics`. Set to `0.0.0.0` for multi-container scraping. |
 | `CLAUDE_TIMEOUT_SECONDS` | `120` | Wall-clock seconds before giving up on a single Claude response. Must exceed `CONFIRMATION_TTL_SECONDS`. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
+
+### Docker compose interpolation
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `DOCKER_NETWORK_NAME` | `media` | Used by `docker-compose.yml` to join your existing stack network. |
+
+### Overseerr (optional — needed for request lookup, cancel, re-search)
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `OVERSEERR_URL` | — | Base URL of your Overseerr instance (e.g. `http://overseerr:5055`). |
 | `OVERSEERR_API_KEY` | — | Overseerr API key (Settings → General → API Key). |
 | `OVERSEERR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Overseerr API calls in seconds. |
+
+### Sonarr (optional)
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `SONARR_URL` | — | Base URL of your Sonarr instance (e.g. `http://sonarr:8989`). |
 | `SONARR_API_KEY` | — | Sonarr API key (Settings → General → API Key). |
 | `SONARR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Sonarr API calls in seconds. |
+
+### Radarr (optional)
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `RADARR_URL` | — | Base URL of your Radarr instance (e.g. `http://radarr:7878`). |
 | `RADARR_API_KEY` | — | Radarr API key (Settings → General → API Key). |
 | `RADARR_TIMEOUT_SECONDS` | `10` | HTTP timeout for Radarr API calls in seconds. |
+
+### qBittorrent (optional)
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
 | `QBITTORRENT_URL` | — | Base URL of your qBittorrent WebUI (e.g. `http://qbittorrent:8080`). |
 | `QBITTORRENT_USERNAME` | — | qBittorrent WebUI username. |
 | `QBITTORRENT_PASSWORD` | — | qBittorrent WebUI password. |
@@ -130,69 +167,9 @@ All configuration is via environment variables — no code edits needed. See [`.
 
 Set `METRICS_ENABLED=true` to expose a Prometheus `/metrics` endpoint on `METRICS_PORT` (default `9100`). Import `assets/grafana/cleanrr.json` into Grafana for a ready-made dashboard.
 
-## Verifying release images
-
-Every image published to `ghcr.io/rayanalyasi/cleanrr` is signed keylessly via [Sigstore](https://www.sigstore.dev/)/cosign at release time — no long-lived signing key exists. To verify both the signature and that it was actually built by this repo's own release workflow (not tampered with or republished by someone else):
-
-```bash
-# Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
-cosign verify ghcr.io/rayanalyasi/cleanrr:0.6.0 \
-  --certificate-identity-regexp="^https://github\.com/RayanAlyasi/cleanrr/\.github/workflows/release\.yml@.*$" \
-  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
-```
-
-A successful verification confirms the image's signature is valid *and* that it was signed by GitHub's OIDC token for this repository's `release.yml` workflow specifically — not just any signature. Signatures and their public transparency-log entries are also independently browsable at [search.sigstore.dev](https://search.sigstore.dev/).
-
 ## Architecture
 
-```
-Telegram user ──DM──> Telegram API ──> cleanrr (Docker)
-                                          │
-                                          ├─ Claude Agent SDK ── reasoning
-                                          │
-                                          └─ tool layer (Phase 4+) ──> Sonarr / Radarr
-                                                                       Overseerr
-                                                                       qBittorrent
-```
-
-Single Python process, single container. Tools are defined as in-process `@tool` functions on the Agent SDK — no separate MCP server processes to run.
-
-### Actors
-
-- **Unlinked Telegram user** — can run `/start`, `/help`, and `/link <code>`. No access to any tool.
-- **Linked user ("owner")** — anyone who has redeemed a link code. Can chat naturally with the bot, look up their own Overseerr requests and Sonarr/Radarr status, and — behind a confirm/cancel prompt — cancel their own requests or re-trigger a search on their own stuck requests. Ownership is checked at the tool layer against what Overseerr lists as theirs; a linked user cannot act on someone else's request.
-- **Admin** — a linked user whose Telegram ID is in `ADMIN_TELEGRAM_IDS`. Can additionally run `/invite` to issue link codes, run stalled-torrent diagnostics, and — behind a confirmation prompt — delete a torrent and its files from qBittorrent.
-- **cleanrr (the bot process)** — orchestrates the above: receives the Telegram message, forwards conversation state to Claude, executes whichever `@tool` calls Claude requests, and enforces the confirmation gate before any destructive tool actually runs.
-- **Claude / Anthropic API** — the reasoning engine. Receives conversation content and tool *definitions*, returns text and tool-call requests. It does not have direct network access to the homelab — cleanrr's tool layer is what actually executes the Sonarr/Radarr/Overseerr/qBittorrent calls.
-- **Overseerr, Sonarr, Radarr, qBittorrent** — backend systems cleanrr calls via their own REST/WebUI APIs, authenticated with admin-scoped API keys stored in `.env`.
-
-### External interfaces
-
-| Interface | Direction | Auth | Notes |
-| --- | --- | --- | --- |
-| Telegram Bot API | Inbound | Bot token | The only interface exposed to end users. |
-| Anthropic API (or Claude subscription auth) | Outbound | OAuth token or API key | Reasoning only — never sees homelab credentials. |
-| Overseerr REST API | Outbound | API key | Request lookup, cancellation. |
-| Sonarr / Radarr REST API | Outbound | API key | Status lookup, re-search trigger. |
-| qBittorrent WebUI API | Outbound | Username/password | Stalled-torrent diagnostics, deletion. |
-| Prometheus `/metrics` | Inbound, optional | None (bind to `127.0.0.1` by default) | Opt-in via `METRICS_ENABLED`; see [Metrics](#metrics-optional). |
-
-### Project layout
-
-```
-cleanrr/
-├── __main__.py        # entrypoint (python -m cleanrr)
-├── bot.py             # application wiring + lifecycle (startup/shutdown)
-├── handlers.py        # Telegram command/message/callback handlers
-├── agent.py           # one Agent = one dedicated Claude subprocess per user
-├── agent_pool.py      # AgentPool: creates/caps one Agent per telegram_user_id
-├── identity.py        # SQLite link-code store + Telegram↔Overseerr mapping
-├── metrics.py         # Prometheus metrics (opt-in)
-├── config.py          # pydantic-settings + auth validation
-├── permissions/       # destructive-action confirmation flow (registry,
-│                      #   prompt formatters, can_use_tool callback)
-└── tools/             # read + write @tool wrappers for Overseerr/Sonarr/Radarr/qBittorrent
-```
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the actor model, external interfaces, and project layout.
 
 ## Roadmap
 
