@@ -44,14 +44,21 @@ CI runs all of these on every PR. `pre-commit install` runs the fast ones locall
 - Configurability lives in `.env` / `Settings`, not in hardcoded constants. Anything a user might reasonably want to change should be a setting.
 - Don't add features, abstractions, or error handling for hypothetical future requirements.
 
+## Dependency management
+
+Direct runtime dependencies are declared in `pyproject.toml` with version ranges, chosen from actively-maintained, widely-used PyPI packages. GitHub Actions used in CI/CD are pinned to an exact commit SHA rather than a mutable tag.
+
+Dependabot tracks updates for the `pip` and `github-actions` ecosystems, plus the Docker base image, on a weekly schedule with a 7-day cooldown — a newly-published version has to sit for a week before Dependabot proposes it, so a just-published (and potentially compromised) release doesn't get pulled in immediately. Updates land as normal PRs and go through the same CI gate (tests, lint, security scans) as any other change.
+
 ## Submitting a PR
 
 1. Open an issue first for anything non-trivial — saves wasted work if the direction isn't right.
 2. Branch from `main`.
 3. Keep PRs focused: one logical change per PR.
 4. Use [Conventional Commits](https://www.conventionalcommits.org/) — `feat:`, `fix:`, `chore:`, `docs:`, `ci:`, `refactor:`, `test:`. release-please reads these on every push to main and opens a Release PR when there is a user-visible change.
-5. **Do not edit `CHANGELOG.md` by hand** — release-please regenerates it. Manual edits get overwritten.
-6. Make sure CI is green before requesting review.
+5. Sign off every commit (`git commit -s`) — certifies you're legally authorized to submit the contribution under the project's license ([DCO](https://developercertificate.org/)). Enforced in CI.
+6. **Do not edit `CHANGELOG.md` by hand** — release-please regenerates it. Manual edits get overwritten.
+7. Make sure CI is green before requesting review.
 
 ## How we work with Claude Code
 
