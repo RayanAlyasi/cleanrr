@@ -23,6 +23,19 @@ See [THREAT_MODEL.md](THREAT_MODEL.md) for the project's security assessment —
 - **Detection**: gitleaks scans the full git history on every push and pull request, plus a local pre-commit hook, so an accidentally-committed secret is caught before it can merge.
 - **Rotation**: each credential is independent (issued by a different service — @BotFather, Anthropic Console, each \*arr app's own Settings page, qBittorrent's WebUI), so rotating one doesn't require touching the others. Update the value in `.env` and restart the container. There's no automated rotation schedule or expiry reminder — rotation is on-demand (e.g. after a suspected leak), not calendar-driven.
 
+## Verifying release images
+
+Every image published to `ghcr.io/rayanalyasi/cleanrr` is signed keylessly via [Sigstore](https://www.sigstore.dev/)/cosign at release time — no long-lived signing key exists. To verify both the signature and that it was actually built by this repo's own release workflow (not tampered with or republished by someone else):
+
+```bash
+# Install cosign: https://docs.sigstore.dev/cosign/system_config/installation/
+cosign verify ghcr.io/rayanalyasi/cleanrr:0.7.0 \
+  --certificate-identity-regexp="^https://github\.com/RayanAlyasi/cleanrr/\.github/workflows/release\.yml@.*$" \
+  --certificate-oidc-issuer=https://token.actions.githubusercontent.com
+```
+
+A successful verification confirms the image's signature is valid *and* that it was signed by GitHub's OIDC token for this repository's `release.yml` workflow specifically — not just any signature. Signatures and their public transparency-log entries are also independently browsable at [search.sigstore.dev](https://search.sigstore.dev/).
+
 ## Vulnerability remediation policy
 
 **Dependencies (SCA)**: [pip-audit](https://github.com/pypa/pip-audit) runs against the full resolved dependency tree on every push and pull request and is a required status check with no bypass except an explicit repository-owner admin override. Any known vulnerability blocks the build — the effective threshold is zero-day: it must be resolved (typically a version bump) or explicitly suppressed via pip-audit's `ignore-vulns` input with a documented reason before a PR can merge. The same gate runs ahead of every release build.

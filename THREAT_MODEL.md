@@ -2,7 +2,7 @@
 
 This is an internal security assessment, not an external audit or pentest. It's based on direct review of the current codebase (`cleanrr/permissions/`, `cleanrr/identity.py`, `cleanrr/config.py`, `cleanrr/tools/*_write.py`, `cleanrr/handlers.py`) and the actual deployment shape (single Docker container on a homelab network, alongside Sonarr/Radarr/Overseerr/qBittorrent). It should be revisited whenever a new tool, a new external integration, or a change to the confirmation/identity model ships — not just on a calendar cadence.
 
-See [README's Architecture section](README.md#architecture) for the actor list and external interface table this assessment assumes.
+See [ARCHITECTURE.md](ARCHITECTURE.md) for the actor list and external interface table this assessment assumes.
 
 ## Methodology
 
