@@ -8,8 +8,6 @@
   <a href="https://www.bestpractices.dev/projects/13991"><img src="https://www.bestpractices.dev/projects/13991/baseline" alt="OpenSSF Best Practices"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/releases"><img src="https://img.shields.io/github/v/release/RayanAlyasi/cleanrr" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/RayanAlyasi/cleanrr" alt="License"></a>
-  <a href="https://github.com/RayanAlyasi/cleanrr/stargazers"><img src="https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social" alt="Stars"></a>
-  <a href="https://www.python.org/"><img src="https://img.shields.io/badge/python-%3E%3D3.12-3776AB?logo=python&logoColor=white" alt="Python"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/pkgs/container/cleanrr"><img src="https://img.shields.io/badge/container-ghcr.io-2088FF?logo=docker&logoColor=white" alt="Container"></a>
 </p>
 
