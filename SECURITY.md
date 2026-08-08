@@ -11,3 +11,7 @@ Use GitHub's private vulnerability reporting: go to the [Security tab](https://g
 ## Supported versions
 
 cleanrr is a self-hosted single-instance bot with no LTS branches. Only the latest release is supported — please upgrade before reporting an issue that might already be fixed.
+
+## Threat model
+
+See [THREAT_MODEL.md](THREAT_MODEL.md) for the project's security assessment — the most likely and impactful risks, what's already mitigated, and what's explicitly accepted or out of scope.
