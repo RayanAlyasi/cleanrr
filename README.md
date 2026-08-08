@@ -4,6 +4,7 @@
 
 <p align="center">
   <a href="https://github.com/RayanAlyasi/cleanrr/actions"><img src="https://img.shields.io/github/actions/workflow/status/RayanAlyasi/cleanrr/ci.yml?branch=main" alt="CI"></a>
+  <a href="https://scorecard.dev/viewer/?uri=github.com/RayanAlyasi/cleanrr"><img src="https://api.scorecard.dev/projects/github.com/RayanAlyasi/cleanrr/badge" alt="OpenSSF Scorecard"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/releases"><img src="https://img.shields.io/github/v/release/RayanAlyasi/cleanrr" alt="Release"></a>
   <a href="LICENSE"><img src="https://img.shields.io/github/license/RayanAlyasi/cleanrr" alt="License"></a>
   <a href="https://github.com/RayanAlyasi/cleanrr/stargazers"><img src="https://img.shields.io/github/stars/RayanAlyasi/cleanrr?style=social" alt="Stars"></a>
@@ -47,6 +48,9 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 | `/invite <overseerr_username>` | Admin only | Issue a one-time link code for a friend. Requires `ADMIN_TELEGRAM_IDS` set. |
 
 ## Destructive actions
+
+> [!WARNING]
+> This bot can cancel requests, re-trigger searches, and **delete torrents and their files**. These actions are gated behind a chat confirmation, but they are real and irreversible once confirmed — read this section before enabling admin access for anyone.
 
 When the bot is about to do something destructive, it posts a Telegram message describing the action with two inline buttons: **Confirm** and **Cancel**. Nothing happens until you tap one. If you don't tap anything within `CONFIRMATION_TTL_SECONDS` (default `60`), the prompt times out and denies the action.
 
