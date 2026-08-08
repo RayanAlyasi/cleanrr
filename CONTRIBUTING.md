@@ -92,4 +92,4 @@ Open an issue with:
 
 ## Reporting security issues
 
-Please **don't** open a public issue for security vulnerabilities. Email the maintainer directly. (Until a `SECURITY.md` lands, use the email on the project's GitHub profile.)
+See [SECURITY.md](SECURITY.md) — please don't open a public issue for security vulnerabilities.
