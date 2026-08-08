@@ -49,6 +49,9 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 
 ## Destructive actions
 
+> [!WARNING]
+> This bot can cancel requests, re-trigger searches, and **delete torrents and their files**. These actions are gated behind a chat confirmation, but they are real and irreversible once confirmed — read this section before enabling admin access for anyone.
+
 When the bot is about to do something destructive, it posts a Telegram message describing the action with two inline buttons: **Confirm** and **Cancel**. Nothing happens until you tap one. If you don't tap anything within `CONFIRMATION_TTL_SECONDS` (default `60`), the prompt times out and denies the action.
 
 Ownership is double-checked at the tool layer: you can only cancel or re-search requests that Overseerr lists as yours. Deleting a torrent is admin-only.
