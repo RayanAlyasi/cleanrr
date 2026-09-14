@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.0...v0.7.1) (2026-09-14)
+
+
+### Documentation
+
+* keep only OpenSSF Best Practices badge ([#101](https://github.com/RayanAlyasi/cleanrr/issues/101)) ([3cbb6a3](https://github.com/RayanAlyasi/cleanrr/commit/3cbb6a36a254b2613ad2d31b493461d45f172aab))
+* split README into focused files, clarify config groups ([#95](https://github.com/RayanAlyasi/cleanrr/issues/95)) ([9f03b3e](https://github.com/RayanAlyasi/cleanrr/commit/9f03b3e9342e405193a4056399ff74e1aba5f3b6))
+
 ## [0.7.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.6.0...v0.7.0) (2026-08-08)
 
 
