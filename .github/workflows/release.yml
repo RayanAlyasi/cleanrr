@@ -1,8 +1,6 @@
 name: Release
 
 on:
-  push:
-    tags: ["v*.*.*"]
   release:
     types: [published]
   workflow_dispatch:
@@ -23,11 +21,9 @@ jobs:
       packages: write
       id-token: write
     env:
-      # Tag name resolves from any of the three trigger sources. release-please
-      # creates tags via the API which don't fire push:tags, so we listen for
-      # release:published (which release-please does emit) and accept manual
-      # workflow_dispatch as a fallback.
-      TAG_NAME: ${{ inputs.tag || github.event.release.tag_name || github.ref_name }}
+      # No push:tags trigger: release-please's PAT-created tag fires it alongside
+      # release:published, which built and pushed every release twice.
+      TAG_NAME: ${{ inputs.tag || github.event.release.tag_name }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
