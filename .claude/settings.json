@@ -11,7 +11,8 @@
       "Bash(python -m pyright:*)",
       "Bash(python -m pytest:*)",
       "Bash(python -m bandit:*)",
-      "Bash(python -m pre_commit:*)"
+      "Bash(python -m pre_commit:*)",
+      "Bash(bash .claude/hooks/gate.sh:*)"
     ],
     "ask": [
       "Bash(rm:*)",
@@ -20,11 +21,19 @@
     ],
     "deny": [
       "Bash(rm -rf:*)",
-      "Bash(git push --force:*)"
+      "Bash(git push --force:*)",
+      "Agent(architect)",
+      "Agent(coder)",
+      "Agent(reviewer)",
+      "Agent(security-auditor)",
+      "Agent(researcher)"
     ]
   },
   "env": {
     "CLAUDE_AUTOCOMPACT_PCT_OVERRIDE": "80"
+  },
+  "worktree": {
+    "baseRef": "head"
   },
   "respectGitignore": true
 }

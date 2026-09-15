@@ -53,3 +53,5 @@ coverage.xml
 .claude/settings.local.json
 .claude/worktrees/
 .claude/PHASE_*.md
+.claude/plans/
+.claude/agent-memory-local/

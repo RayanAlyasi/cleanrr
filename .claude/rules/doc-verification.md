@@ -15,9 +15,10 @@ Before writing code that depends on specific behavior from a library, SDK, or ex
 
 ## How to apply, by role
 
-- **Planning/writing a spec** (orchestrator, Opus): this is the only point in the `/cleanrr-ship` pipeline with full tool access (WebFetch/WebSearch). Any spec line whose correctness depends on library/API behavior must be verified here, before handoff — see `spec-quality.md`. `cleanrr-builder` implements verbatim and cannot research; an unverified assumption baked into the spec ships as-is.
-- **Implementing** (`cleanrr-builder`, no WebFetch/WebSearch): you can still read the installed library's actual source via `Read`/`Grep`/`Glob`/`Bash` — do this when a spec's behavior assumption is load-bearing and you can cheaply confirm it. If the source contradicts what the spec assumes, STOP and flag it rather than implementing the assumption anyway.
-- **Reviewing/auditing** (`cleanrr-reviewer`, `cleanrr-security`, no WebFetch/WebSearch): keep filing library/SDK/API-behavior-dependent claims under `## Verify` as already required by each agent's contract. The orchestrator must then resolve every `## Verify` item via a research-capable agent before treating the audit as complete — an unresolved `## Verify` item is not the same as "no issue found."
+- **Planning** (`cleanrr-planner`, Opus, has WebFetch/WebSearch): every task-spec line whose correctness depends on library/API behavior is verified here, before the plan is written, and recorded under the plan's "Verified assumptions" with where it was checked. Anything that could not be verified goes under "Unverified" so it can't travel into implementation disguised as a decision. See `spec-quality.md`.
+- **Implementing** (`cleanrr-coder`, no WebFetch/WebSearch): you can still read the installed library's actual source via `Read`/`Grep`/`Glob`/`Bash` — do this when a spec's behavior assumption is load-bearing and you can cheaply confirm it. If the source contradicts what the spec assumes, STOP and flag it rather than implementing the assumption anyway.
+- **Reviewing** (`cleanrr-reviewer`, no WebFetch/WebSearch): file library/SDK/API-behavior-dependent claims under `## Verify`, never in a severity bucket.
+- **Auditing** (`cleanrr-security`, has WebFetch/WebSearch): resolve your own and the reviewer's `## Verify` items against current docs or installed source before reporting. An unresolved `## Verify` item is not the same as "no issue found."
 
 ## Gotcha list (verified false assumptions that shipped as bugs)
 

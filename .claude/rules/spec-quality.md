@@ -1,6 +1,6 @@
 # Spec quality — cleanrr
 
-Before invoking `/cleanrr-ship`, run a correctness pass on the spec against the surrounding code. `cleanrr-builder` follows the spec literally — any logic error in the spec ships as a logic error in the code, with reviewer and security blind to it (different lanes).
+`cleanrr-planner` runs this correctness pass on every task spec before writing a plan; anyone writing a plan by hand does the same. `cleanrr-coder` follows the spec literally — any logic error in the spec ships as a logic error in the code, and the reviewer sees it only if it happens to show in the diff.
 
 For every line of code the spec dictates, ask: **does it actually do what its name claims, given the rest of the codebase?** Pay attention to:
 
@@ -10,6 +10,6 @@ For every line of code the spec dictates, ask: **does it actually do what its na
 - **Idempotency.** If a handler can be called twice (retry, reconnect, replay), does the spec's mutation hold? Re-runs should converge, not drift.
 - **Conditional work.** If a feature is opt-in (`*_ENABLED=false` by default), gate the work behind the flag. Don't run DB queries or background tasks for nobody.
 
-**External library/API behavior.** If a line of the spec depends on how a third-party library, SDK, or external API behaves — not just internal codebase logic — verify that behavior against actually-fetched current docs or source before finalizing the spec. `cleanrr-builder` has no WebFetch/WebSearch access and implements verbatim; this is the only point in the pipeline where that research can happen. See `doc-verification.md` for the concrete gotcha list this project has already been burned by.
+**External library/API behavior.** If a line of the spec depends on how a third-party library, SDK, or external API behaves — not just internal codebase logic — verify that behavior against actually-fetched current docs or source before finalizing the spec, and record it under the plan's "Verified assumptions". `cleanrr-coder` has no WebFetch/WebSearch access and implements verbatim; the planner and `cleanrr-security` are the only agents that can research. See `doc-verification.md` for the concrete gotcha list this project has already been burned by.
 
-The downstream agents (builder, reviewer, security) are each scoped to their lane and won't deviate from a flawed spec. Catching it here is the highest-leverage move. `/cleanrr-ship` runs an Opus final review as a backstop, but that's a backstop — not a substitute for spec discipline.
+The downstream agents (coder, reviewer, security) are each scoped to their lane and won't deviate from a flawed spec. Catching it here is the highest-leverage move. `cleanrr-reviewer` runs on Opus and checks intent-vs-literal as a backstop, but that's a backstop — not a substitute for spec discipline.
