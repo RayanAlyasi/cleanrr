@@ -8,6 +8,8 @@ agent: cleanrr-planner
 background: false
 ---
 
+Run this from a fresh session, or after `/clear`: the planner starts cold either way, but the session that launches it pays for its own history on every turn.
+
 Plan the following change to cleanrr:
 
 $ARGUMENTS

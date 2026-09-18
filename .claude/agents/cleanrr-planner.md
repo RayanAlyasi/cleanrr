@@ -33,6 +33,10 @@ Four questions decide most designs, in this order:
 3. **What does the user learn that Overseerr's own UI doesn't already show?** A read tool that mirrors request status is not worth a task. Surfacing *why* something is stuck is.
 4. **What breaks on one small server?** One CLI subprocess per user, a memory-constrained host, a handful of friends. Unbounded fetch loops, background work for nobody, and per-message subprocess spawns are the realistic failures.
 
+## Spend turns, not tokens
+
+Every turn re-reads your whole context, so the number of turns is what a run costs. Issue independent reads, greps, and git queries together in one message instead of one per turn. For a large file you are not changing (a long test module, library source), grep for the symbol and read that range rather than the whole file.
+
 ## Verify before you commit an assumption to the plan
 
 Any line of a task spec that depends on how a third-party library, SDK, or external API behaves must be verified here, because the coder cannot research. Use WebFetch/WebSearch for current docs, or read the installed source under `.venv/Lib/site-packages/` (Windows) or `.venv/lib/python*/site-packages/`. Record each verified fact in the plan's **Verified assumptions** section with where you checked it. If you could not verify something, say so in the plan rather than letting it travel disguised as a decision.
