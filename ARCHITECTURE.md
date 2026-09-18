@@ -16,9 +16,9 @@ Single Python process, single container. Tools are defined as in-process `@tool`
 
 ## Actors
 
-- **Unlinked Telegram user** — can run `/start`, `/help`, and `/link <code>`. No access to any tool.
+- **Unlinked Telegram user** — can run `/start`, `/help`, and `/link <code>`. Any other message is refused in `on_message` before it reaches Claude — no access to any tool.
 - **Linked user ("owner")** — anyone who has redeemed a link code. Can chat naturally with the bot, look up their own Overseerr requests and Sonarr/Radarr status, and — behind a confirm/cancel prompt — cancel their own requests or re-trigger a search on their own stuck requests. Ownership is checked at the tool layer against what Overseerr lists as theirs; a linked user cannot act on someone else's request.
-- **Admin** — a linked user whose Telegram ID is in `ADMIN_TELEGRAM_IDS`. Can additionally run `/invite` to issue link codes, run stalled-torrent diagnostics, and — behind a confirmation prompt — delete a torrent and its files from qBittorrent.
+- **Admin** — anyone whose Telegram ID is in `ADMIN_TELEGRAM_IDS`. Can chat and run `/invite`, stalled-torrent diagnostics, and — behind a confirmation prompt — delete a torrent and its files from qBittorrent, all without ever redeeming a link code. Reaching the owner-scoped tools above still requires linking, since those resolve the caller through `identity.get_link`.
 - **cleanrr (the bot process)** — orchestrates the above: receives the Telegram message, forwards conversation state to Claude, executes whichever `@tool` calls Claude requests, and enforces the confirmation gate before any destructive tool actually runs.
 - **Claude / Anthropic API** — the reasoning engine. Receives conversation content and tool *definitions*, returns text and tool-call requests. It does not have direct network access to the homelab — cleanrr's tool layer is what actually executes the Sonarr/Radarr/Overseerr/qBittorrent calls.
 - **Overseerr, Sonarr, Radarr, qBittorrent** — backend systems cleanrr calls via their own REST/WebUI APIs, authenticated with admin-scoped API keys stored in `.env`.

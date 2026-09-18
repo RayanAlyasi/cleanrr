@@ -64,11 +64,11 @@ Threats below were identified by tracing three things through the actual code, n
 
 ### 5. Denial of service via message/action flooding
 
-**What**: Any Telegram user can message the bot; each message spawns/reuses a per-user Agent.
+**What**: Only linked users and admins reach the Agent pool; `on_message` refuses everyone else before `pool.get_or_create` is ever called, so an unlinked stranger can't spawn or reuse an Agent, only trigger a refusal reply.
 
-**Existing mitigation** (this is a place where the risk is already actively managed, not just noted): `TELEGRAM_MAX_MESSAGE_CHARS` rejects oversized messages before they reach Claude; `AgentPool` caps total concurrent per-user agents; `ConfirmationRegistry` caps both total pending confirmations (100) and per-user pending confirmations (3), specifically to stop "a single noisy client" from exhausting the global slots (see the docstring in `_registry.py`).
+**Existing mitigation** (this is a place where the risk is already actively managed, not just noted): the link gate itself (`identity.get_link` / `settings.admin_telegram_ids`, checked in `on_message` via `_is_authorized`) keeps unauthorized senders out of the Agent pool entirely; `TELEGRAM_MAX_MESSAGE_CHARS` rejects oversized messages before they reach Claude; `AgentPool` caps total concurrent per-user agents; `ConfirmationRegistry` caps both total pending confirmations (100) and per-user pending confirmations (3), specifically to stop "a single noisy client" from exhausting the global slots (see the docstring in `_registry.py`).
 
-**Residual risk**: low. This is the one category where the codebase already treats DoS as a first-class concern with enforced numeric limits, not just documentation.
+**Residual risk**: low. A linked user or admin can still flood the bot within those caps, and an unlinked stranger can still make the bot emit one refusal reply per message — Telegram's own flood limits are the only bound on that. This is the one category where the codebase already treats DoS as a first-class concern with enforced numeric limits, not just documentation.
 
 ### 6. Supply chain (dependencies, CI/CD, container image)
 
