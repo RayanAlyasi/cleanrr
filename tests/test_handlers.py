@@ -749,7 +749,7 @@ async def test_on_confirmation_answers_when_waiter_already_gone() -> None:
     the id and user both check out. The tap must get the same visible
     answer an evicted confirmation gets, not silence."""
     registry = ConfirmationRegistry(ttl_seconds=60)
-    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
     assert cid is not None
     pending = await registry.register(
         confirmation_id=cid,
@@ -776,7 +776,7 @@ async def test_on_confirmation_waiter_gone_survives_edit_failure() -> None:
     """Same best-effort edit as the expired-id branch: a failure to edit the
     original message must not crash the handler."""
     registry = ConfirmationRegistry(ttl_seconds=60)
-    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
     assert cid is not None
     pending = await registry.register(
         confirmation_id=cid,
@@ -793,6 +793,36 @@ async def test_on_confirmation_waiter_gone_survives_edit_failure() -> None:
     update.callback_query.edit_message_text = AsyncMock(side_effect=RuntimeError("gone"))
 
     await on_confirmation(update, context)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_second_tap_keeps_real_outcome() -> None:
+    """A second tap on an already-answered confirmation also makes
+    resolve() return False (the future is done, the entry is gone) — but
+    pending.outcome is already "confirmed", so this must not overwrite the
+    real outcome message with "expired"."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    first_resolved = await registry.resolve(cid, telegram_user_id=42, allowed=True)
+    assert first_resolved is True
+    assert pending.outcome == "confirmed"
+
+    registry.get = AsyncMock(return_value=pending)
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    answer.assert_awaited_once()
+    update.callback_query.edit_message_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

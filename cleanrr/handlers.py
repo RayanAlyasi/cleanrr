@@ -250,7 +250,10 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     # already gone — evicted, or its future cancelled by an interrupted
     # can_use_tool. The buttons are still live, so give the tapper the same
     # answer an evicted confirmation gets instead of leaving them with none.
-    if not resolved:
+    # But resolve() also returns False when a concurrent tap already answered
+    # it — pending.outcome is then set, and that path's outcome message must
+    # not be overwritten with "expired".
+    if not resolved and pending.outcome is None:
         await _mark_confirmation_expired(query)
 
 
