@@ -25,7 +25,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 ## What it does today
 
 - Runs as a Docker service on the same network as your existing media stack.
-- Accepts Telegram DMs from any user, replies via Claude (model configurable — defaults to Sonnet).
+- Chat is limited to linked users and admins; everyone else is told to ask for a link code. Replies via Claude (model configurable — defaults to Sonnet).
 - Maintains a per-user conversation session so follow-up questions retain context.
 - Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts.
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
@@ -74,11 +74,11 @@ See [the roadmap](#roadmap) below.
 git clone https://github.com/RayanAlyasi/cleanrr.git
 cd cleanrr
 cp .env.example .env
-# edit .env — minimum: TELEGRAM_BOT_TOKEN + one of the two auth options
+# edit .env — minimum: TELEGRAM_BOT_TOKEN, ADMIN_TELEGRAM_IDS, and one of the two auth options
 docker compose up -d --build
 ```
 
-Then DM your bot on Telegram and say hi.
+Then DM your bot on Telegram and say hi. Only the IDs in `ADMIN_TELEGRAM_IDS` can chat at first; everyone else joins by redeeming a code you issue with `/invite`.
 
 ### Prerequisites
 
@@ -98,6 +98,7 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | Variable | Purpose |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather. |
+| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs allowed to run `/invite` and chat without a link. Left empty, nobody can chat and no link codes can be issued. |
 
 ### Authentication — set exactly one
 
@@ -112,7 +113,6 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | --- | --- | --- |
 | `CLAUDE_MODEL` | `sonnet` | `opus`, `sonnet`, `haiku`, or a full model ID. |
 | `CLAUDE_SYSTEM_PROMPT` | built-in | Override the bot's persona without touching code. |
-| `ADMIN_TELEGRAM_IDS` | — | Comma-separated Telegram user IDs allowed to run `/invite`. |
 | `DATABASE_PATH` | `data/cleanrr.db` | SQLite path for link codes and identity mappings. |
 | `LINK_CODE_TTL_HOURS` | `24` | How long link codes remain valid before expiring. |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR`. |

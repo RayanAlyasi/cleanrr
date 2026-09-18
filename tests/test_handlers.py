@@ -77,19 +77,25 @@ def _make_context(
     confirmation_registry: ConfirmationRegistry | MagicMock | None = None,
 ) -> MagicMock:
     context = MagicMock()
-    # OVERSEERR_CLIENT_KEY and CONFIRMATION_REGISTRY_KEY are always present in
-    # real bot_data (build_application sets them unconditionally, sometimes to
-    # None) — set them unconditionally here too so cmd_invite/on_confirmation
-    # never hit a KeyError from an incomplete test double.
+    # OVERSEERR_CLIENT_KEY, CONFIRMATION_REGISTRY_KEY, and IDENTITY_KEY are
+    # always present in real bot_data (build_application sets them
+    # unconditionally, sometimes to None) — set them unconditionally here too
+    # so cmd_invite/on_confirmation/on_message never hit a KeyError from an
+    # incomplete test double. IDENTITY_KEY defaults to a linked, non-admin
+    # double (get_link resolves) so on_message's authorization gate doesn't
+    # need every test to care about linking; callers that pass their own
+    # identity (cmd_invite/cmd_link tests) still win.
+    if identity is None:
+        identity = MagicMock()
+        identity.get_link = AsyncMock(return_value="alice")
     bot_data: dict[str, object] = {
         SETTINGS_KEY: settings,
+        IDENTITY_KEY: identity,
         OVERSEERR_CLIENT_KEY: overseerr_client,
         CONFIRMATION_REGISTRY_KEY: confirmation_registry,
     }
     if pool is not None:
         bot_data[AGENT_POOL_KEY] = pool
-    if identity is not None:
-        bot_data[IDENTITY_KEY] = identity
     context.application.bot_data = bot_data
     return context
 
@@ -185,10 +191,87 @@ async def test_on_message_replies_at_capacity_when_pool_full() -> None:
     update = _make_update("hello")
     context = _make_context(settings, pool=_make_pool(None))
 
+    before = _counter_value({"status": "at_capacity"})
+
     await on_message(update, context)
 
     reply = update.message.reply_text.await_args.args[0]
     assert "capacity" in reply.lower()
+    assert _counter_value({"status": "at_capacity"}) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_on_message_refuses_unlinked_non_admin() -> None:
+    settings = _make_settings(admin_ids=set())
+    identity = MagicMock()
+    identity.get_link = AsyncMock(return_value=None)
+    agent = MagicMock()
+    agent.respond = AsyncMock()
+    pool = _make_pool(agent)
+    update = _make_update("hello")
+    context = _make_context(settings, pool=pool, identity=identity)
+
+    before = _counter_value({"status": "unauthorized"})
+
+    await on_message(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "/link" in reply
+    pool.get_or_create.assert_not_awaited()
+    agent.respond.assert_not_called()
+    assert _counter_value({"status": "unauthorized"}) == before + 1
+
+
+@pytest.mark.asyncio
+async def test_on_message_admin_bypasses_link_check() -> None:
+    """Admin membership is config, not I/O — it must short-circuit before
+    any lookup so a broken link table can't lock the admin out."""
+    settings = _make_settings(admin_ids={1})
+    identity = MagicMock()
+    identity.get_link = AsyncMock(return_value=None)
+    agent = MagicMock()
+    agent.respond = AsyncMock(return_value="hi")
+    update = _make_update("hello", user_id=1)
+    context = _make_context(settings, pool=_make_pool(agent), identity=identity)
+
+    await on_message(update, context)
+
+    agent.respond.assert_awaited_once()
+    identity.get_link.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_message_linked_non_admin_reaches_claude() -> None:
+    settings = _make_settings(admin_ids=set())
+    identity = MagicMock()
+    identity.get_link = AsyncMock(return_value="alice")
+    agent = MagicMock()
+    agent.respond = AsyncMock(return_value="hi")
+    update = _make_update("hello", user_id=1)
+    context = _make_context(settings, pool=_make_pool(agent), identity=identity)
+
+    await on_message(update, context)
+
+    agent.respond.assert_awaited_once_with(prompt="hello")
+
+
+@pytest.mark.asyncio
+async def test_on_message_unauthorized_checked_before_length() -> None:
+    settings = _make_settings(max_chars=10, admin_ids=set())
+    identity = MagicMock()
+    identity.get_link = AsyncMock(return_value=None)
+    agent = MagicMock()
+    agent.respond = AsyncMock()
+    update = _make_update("x" * 11)
+    context = _make_context(settings, pool=_make_pool(agent), identity=identity)
+
+    before_unauthorized = _counter_value({"status": "unauthorized"})
+    before_too_long = _counter_value({"status": "rejected_too_long"})
+
+    await on_message(update, context)
+
+    assert _counter_value({"status": "unauthorized"}) == before_unauthorized + 1
+    assert _counter_value({"status": "rejected_too_long"}) == before_too_long
 
 
 @pytest.mark.asyncio
@@ -498,6 +581,8 @@ async def test_cmd_link_invalid_code() -> None:
 
 @pytest.mark.asyncio
 async def test_cmd_link_happy_path() -> None:
+    """A user with no existing link must still be able to redeem a code —
+    /link never consults get_link, only redeem_code."""
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value="alice")
     update = _make_update("", user_id=1)
@@ -508,6 +593,7 @@ async def test_cmd_link_happy_path() -> None:
 
     reply = update.message.reply_text.await_args.args[0]
     assert "Linked you to Overseerr user @alice" in reply
+    identity.get_link.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
@@ -535,6 +621,7 @@ async def test_cmd_start_happy_path() -> None:
 
     reply = update.message.reply_text.await_args.args[0]
     assert "cleanrr is online" in reply
+    assert "/link" in reply
     assert (
         metrics.telegram_messages_total.labels(kind="command", command="start")._value.get()
         == before + 1
@@ -567,6 +654,7 @@ async def test_cmd_help_lists_commands() -> None:
     assert "/help" in reply
     assert "/link" in reply
     assert "/invite" in reply
+    assert "linked" in reply.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -650,6 +738,91 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
 
     answer.assert_awaited()
     assert pending.future.result() is True
+    # The permission callback owns the outcome edit on this path, not the handler.
+    update.callback_query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_answers_when_waiter_already_gone() -> None:
+    """An interrupt can cancel a pending confirmation's future while the
+    registry entry is still live — resolve() then returns False even though
+    the id and user both check out. The tap must get the same visible
+    answer an evicted confirmation gets, not silence."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    pending.future.cancel()
+
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    answer.assert_awaited_once()
+    update.callback_query.edit_message_text.assert_awaited_once_with(
+        "This confirmation has expired."
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_waiter_gone_survives_edit_failure() -> None:
+    """Same best-effort edit as the expired-id branch: a failure to edit the
+    original message must not crash the handler."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    pending.future.cancel()
+
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, _ = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    update.callback_query.edit_message_text = AsyncMock(side_effect=RuntimeError("gone"))
+
+    await on_confirmation(update, context)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_second_tap_keeps_real_outcome() -> None:
+    """A second tap on an already-answered confirmation also makes
+    resolve() return False (the future is done, the entry is gone) — but
+    pending.outcome is already "confirmed", so this must not overwrite the
+    real outcome message with "expired"."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    first_resolved = await registry.resolve(cid, telegram_user_id=42, allowed=True)
+    assert first_resolved is True
+    assert pending.outcome == "confirmed"
+
+    registry.get = AsyncMock(return_value=pending)
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    answer.assert_awaited_once()
+    update.callback_query.edit_message_text.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -33,7 +33,8 @@ async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     metrics.telegram_messages_total.labels(kind="command", command="start").inc()
     await update.message.reply_text(
         "cleanrr is online. Ask about your requests, or ask me to cancel or "
-        "re-search one — I'll confirm before doing anything destructive."
+        "re-search one — I'll confirm before doing anything destructive. "
+        "Not linked yet? Ask the admin for a code, then send /link <code>."
     )
 
 
@@ -47,8 +48,16 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/help — this message\n"
         "/link <code> — bind your Telegram account to an Overseerr user\n"
         "/invite <overseerr_username> — admin only; issue a link code\n\n"
-        "Send any message and I'll reply via Claude."
+        "Once you're linked, send any message and I'll reply via Claude."
     )
+
+
+async def _is_authorized(telegram_user_id: int, identity: Identity, settings: Settings) -> bool:
+    # Admins are checked first — that's pure config, no I/O, so a broken or
+    # empty link table can never lock the admin out.
+    if telegram_user_id in settings.admin_telegram_ids:
+        return True
+    return await identity.get_link(telegram_user_id) is not None
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -58,10 +67,24 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     pool: AgentPool = context.application.bot_data[AGENT_POOL_KEY]
     settings: Settings = context.application.bot_data[SETTINGS_KEY]
+    identity: Identity = context.application.bot_data[IDENTITY_KEY]
     user = update.effective_user
     text = update.message.text
+    # username is user-controlled; strip non-printable chars to prevent log injection.
+    safe_username = "".join(c for c in (user.username or "?") if c.isprintable())[:32]
 
     metrics.telegram_messages_total.labels(kind="text", command="").inc()
+
+    # An unlinked stranger must never reach AgentPool.get_or_create or spend
+    # Claude quota. This runs before the length check so the refusal is the
+    # only reply an unauthorized sender can elicit.
+    if not await _is_authorized(user.id, identity, settings):
+        metrics.claude_requests_total.labels(status="unauthorized").inc()
+        logger.warning("refused unlinked user %s (@%s)", user.id, safe_username)
+        await update.message.reply_text(
+            "You're not linked yet. Ask the admin for a link code, then send /link <code>."
+        )
+        return
 
     if len(text) > settings.telegram_max_message_chars:
         limit = settings.telegram_max_message_chars
@@ -71,12 +94,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
 
-    # username is user-controlled; strip non-printable chars to prevent log injection.
-    safe_username = "".join(c for c in (user.username or "?") if c.isprintable())[:32]
     logger.info("message from %s (id=%s): %s", safe_username, user.id, text[:80])
 
     agent = await pool.get_or_create(user.id)
     if agent is None:
+        metrics.claude_requests_total.labels(status="at_capacity").inc()
         await update.message.reply_text("cleanrr's at capacity right now — try again in a bit.")
         return
 
@@ -180,6 +202,14 @@ async def _safe_answer(query: CallbackQuery, *args: Any, **kwargs: Any) -> None:
         logger.warning("failed to answer callback query", exc_info=True)
 
 
+async def _mark_confirmation_expired(query: CallbackQuery) -> None:
+    """Best-effort edit — the original message may already be gone."""
+    try:
+        await query.edit_message_text("This confirmation has expired.")
+    except Exception:
+        logger.debug("couldn't edit expired confirmation message", exc_info=True)
+
+
 async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None or update.effective_user is None:
@@ -201,10 +231,7 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     pending = await registry.get(confirmation_id)
     if pending is None:
         await _safe_answer(query)
-        try:
-            await query.edit_message_text("This confirmation has expired.")
-        except Exception:
-            logger.debug("couldn't edit expired confirmation message", exc_info=True)
+        await _mark_confirmation_expired(query)
         return
 
     # answerCallbackQuery only accepts ONE response per query; calling it
@@ -214,11 +241,20 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await _safe_answer(query)
-    await registry.resolve(
+    resolved = await registry.resolve(
         confirmation_id,
         telegram_user_id=update.effective_user.id,
         allowed=(decision == "yes"),
     )
+    # False here means the id and user checked out above but the waiter is
+    # already gone — evicted, or its future cancelled by an interrupted
+    # can_use_tool. The buttons are still live, so give the tapper the same
+    # answer an evicted confirmation gets instead of leaving them with none.
+    # But resolve() also returns False when a concurrent tap already answered
+    # it — pending.outcome is then set, and that path's outcome message must
+    # not be overwritten with "expired".
+    if not resolved and pending.outcome is None:
+        await _mark_confirmation_expired(query)
 
 
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
