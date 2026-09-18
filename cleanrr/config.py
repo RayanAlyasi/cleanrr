@@ -36,7 +36,10 @@ class Settings(BaseSettings):
 
     admin_telegram_ids: Annotated[set[int], NoDecode] = Field(
         default_factory=set,
-        description="Telegram user IDs allowed to run /invite; empty disables /invite.",
+        description=(
+            "Telegram user IDs allowed to run /invite and to chat with the bot "
+            "without a link code; empty disables /invite."
+        ),
     )
     database_path: Path = Field(
         default=Path("data/cleanrr.db"),
