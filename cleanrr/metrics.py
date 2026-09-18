@@ -12,6 +12,7 @@ claude_requests_total = Counter(
     "cleanrr_claude_requests_total",
     # Allowed status values: unauthorized | rejected_too_long | at_capacity |
     # timeout | error | delivery_failed | success.
+    # get_link raising skips this counter; the gap surfaces in telegram_messages_total{kind="text"}.
     "Inbound Telegram messages by outcome",
     ["status"],
 )

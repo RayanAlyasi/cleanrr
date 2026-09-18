@@ -738,6 +738,61 @@ async def test_on_confirmation_resolves_pending_for_right_user() -> None:
 
     answer.assert_awaited()
     assert pending.future.result() is True
+    # The permission callback owns the outcome edit on this path, not the handler.
+    update.callback_query.edit_message_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_answers_when_waiter_already_gone() -> None:
+    """An interrupt can cancel a pending confirmation's future while the
+    registry entry is still live — resolve() then returns False even though
+    the id and user both check out. The tap must get the same visible
+    answer an evicted confirmation gets, not silence."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    pending.future.cancel()
+
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, answer = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    await on_confirmation(update, context)
+
+    answer.assert_awaited_once()
+    update.callback_query.edit_message_text.assert_awaited_once_with(
+        "This confirmation has expired."
+    )
+
+
+@pytest.mark.asyncio
+async def test_on_confirmation_waiter_gone_survives_edit_failure() -> None:
+    """Same best-effort edit as the expired-id branch: a failure to edit the
+    original message must not crash the handler."""
+    registry = ConfirmationRegistry(ttl_seconds=60)
+    cid = await registry.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    pending = await registry.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    pending.future.cancel()
+
+    context = _make_context(_make_settings(), confirmation_registry=registry)
+
+    update, _ = _make_callback_update(f"cleanrr:confirm:{cid}:yes", user_id=42)
+    update.callback_query.edit_message_text = AsyncMock(side_effect=RuntimeError("gone"))
+
+    await on_confirmation(update, context)  # must not raise
 
 
 @pytest.mark.asyncio

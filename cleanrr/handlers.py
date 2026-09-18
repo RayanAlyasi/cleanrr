@@ -202,6 +202,14 @@ async def _safe_answer(query: CallbackQuery, *args: Any, **kwargs: Any) -> None:
         logger.warning("failed to answer callback query", exc_info=True)
 
 
+async def _mark_confirmation_expired(query: CallbackQuery) -> None:
+    """Best-effort edit — the original message may already be gone."""
+    try:
+        await query.edit_message_text("This confirmation has expired.")
+    except Exception:
+        logger.debug("couldn't edit expired confirmation message", exc_info=True)
+
+
 async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     query = update.callback_query
     if query is None or query.data is None or update.effective_user is None:
@@ -223,10 +231,7 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
     pending = await registry.get(confirmation_id)
     if pending is None:
         await _safe_answer(query)
-        try:
-            await query.edit_message_text("This confirmation has expired.")
-        except Exception:
-            logger.debug("couldn't edit expired confirmation message", exc_info=True)
+        await _mark_confirmation_expired(query)
         return
 
     # answerCallbackQuery only accepts ONE response per query; calling it
@@ -236,11 +241,17 @@ async def on_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         return
 
     await _safe_answer(query)
-    await registry.resolve(
+    resolved = await registry.resolve(
         confirmation_id,
         telegram_user_id=update.effective_user.id,
         allowed=(decision == "yes"),
     )
+    # False here means the id and user checked out above but the waiter is
+    # already gone — evicted, or its future cancelled by an interrupted
+    # can_use_tool. The buttons are still live, so give the tapper the same
+    # answer an evicted confirmation gets instead of leaving them with none.
+    if not resolved:
+        await _mark_confirmation_expired(query)
 
 
 async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
