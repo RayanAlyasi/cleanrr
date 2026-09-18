@@ -37,9 +37,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Bounds the post-timeout cleanup below, which runs while the user is still
-# waiting for the "taking too long" reply.
+# Bound the post-timeout cleanup below, all of which runs while the user is
+# still waiting for the "taking too long" reply. The interrupt-and-drain is
+# bounded by the first constant; if that fails, the fallback restart's stop()
+# is bounded by the SDK's own close() escalation (~20s) and start() by the
+# second constant.
 _TIMEOUT_RECOVERY_SECONDS = 10.0
+_TIMEOUT_RESTART_SECONDS = 30.0
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -346,8 +350,12 @@ class Agent:
                     exc_info=True,
                 )
 
+        # Not wrapped: the SDK's close() escalation must run to completion or
+        # the CLI child is orphaned as <defunct>. start() is safe to bound —
+        # ClaudeSDKClient.connect() cleans up its own subprocess on any
+        # exception, including cancellation from this wait_for firing.
         await self.stop()
-        await self.start(telegram_user_id)
+        await asyncio.wait_for(self.start(telegram_user_id), timeout=_TIMEOUT_RESTART_SECONDS)
 
     async def respond(self, *, prompt: str) -> str:
         if self._client is None:
@@ -397,7 +405,14 @@ class Agent:
                 # The CLI keeps streaming the abandoned turn into the SDK's
                 # shared buffer even after we stop reading it — without this,
                 # the next respond() would read this turn's leftover result.
-                await self._recover_from_timeout()
+                try:
+                    await self._recover_from_timeout()
+                except Exception:
+                    # Never let cleanup replace the TimeoutError the handler
+                    # keys on (it decides the user-facing message and the
+                    # timeout vs error metric label) — log and fall through
+                    # to the bare raise below regardless of how this failed.
+                    logger.exception("post-timeout recovery failed; the client may be unusable")
                 raise
         finally:
             self._lock.release()

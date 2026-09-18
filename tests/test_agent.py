@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import asyncio
+import logging
+import time
 from collections.abc import AsyncIterator
 from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -453,6 +455,11 @@ async def test_respond_raises_timeout_when_sdk_hangs() -> None:
 
     agent._client = mock_client
     agent._telegram_user_id = 1
+    # The drain terminates on its own here, so recovery never falls back to
+    # stop/start — stub them anyway so a future drain regression fails
+    # cleanly instead of spawning a real CLI subprocess in this unit test.
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
 
     with pytest.raises(TimeoutError):
         await agent.respond(prompt="hello")
@@ -634,6 +641,11 @@ async def test_lock_releases_after_timeout() -> None:
 
     agent._client = mock_client
     agent._telegram_user_id = 1
+    # The drain terminates on its own here, so recovery never falls back to
+    # stop/start — stub them anyway so a future drain regression fails
+    # cleanly instead of spawning a real CLI subprocess in this unit test.
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
 
     with pytest.raises(TimeoutError):
         await agent.respond(prompt="first")
@@ -716,6 +728,11 @@ async def test_second_respond_after_timeout_gets_fresh_reply_not_stale_one() -> 
 
     agent._client = mock_client
     agent._telegram_user_id = 1
+    # The drain terminates on its own here, so recovery never falls back to
+    # stop/start — stub them anyway so a future drain regression fails
+    # cleanly instead of spawning a real CLI subprocess in this unit test.
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
 
     with pytest.raises(TimeoutError):
         await agent.respond(prompt="first")
@@ -785,6 +802,169 @@ async def test_recovery_falls_back_to_restart_when_interrupt_raises() -> None:
 
 
 @pytest.mark.asyncio
+async def test_recovery_failure_does_not_mask_timeout_when_start_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A restart that fails (e.g. the CLI can't spawn under the same memory
+    pressure that caused the timeout) must not replace the TimeoutError the
+    handler keys on — it must be logged and swallowed instead."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock(side_effect=CLIConnectionError("boom"))  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.ERROR), pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    assert "post-timeout recovery failed" in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_recovery_failure_does_not_mask_timeout_when_stop_fails(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Same as above but stop() itself is what fails (also possible under the
+    same resource pressure) — start() must not even be attempted."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock(side_effect=CLIConnectionError("boom"))  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with caplog.at_level(logging.ERROR), pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    assert "post-timeout recovery failed" in caplog.text
+    agent.start.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_restart_is_bounded_by_timeout_restart_seconds(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The fallback restart must not hold the lock indefinitely — a hung
+    start() is bounded by _TIMEOUT_RESTART_SECONDS, and the lock is released
+    for the next caller afterward."""
+    from cleanrr import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_TIMEOUT_RESTART_SECONDS", 0.05)
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+
+    async def _hang(_telegram_user_id: int) -> None:
+        await asyncio.sleep(5)
+
+    agent.start = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
+
+    started_at = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+    elapsed = time.monotonic() - started_at
+    assert elapsed < 1.0
+
+    # Lock released afterward: a following respond() with a working client
+    # proceeds rather than hanging behind the still-pending restart.
+    mock_client.receive_response = lambda: _fast_generator("second call")
+    mock_client.interrupt = AsyncMock()
+    result = await asyncio.wait_for(agent.respond(prompt="second"), timeout=1.0)
+    assert result == "second call"
+
+
+@pytest.mark.asyncio
+async def test_stop_awaited_before_start_and_not_cancelled_by_restart_timeout(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """stop() runs to completion even when the following start() overruns
+    _TIMEOUT_RESTART_SECONDS — only start() is wrapped in wait_for, because a
+    raw asyncio cancellation delivered to stop() would skip the SDK's
+    terminate/kill escalation and orphan the CLI child."""
+    from cleanrr import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_TIMEOUT_RESTART_SECONDS", 0.05)
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+
+    order: list[str] = []
+    stop_completed = False
+
+    async def _stop() -> None:
+        nonlocal stop_completed
+        order.append("stop:start")
+        # Longer than _TIMEOUT_RESTART_SECONDS: if stop() were wrapped in the
+        # same wait_for as start(), this would never reach "stop:done".
+        await asyncio.sleep(0.03)
+        stop_completed = True
+        order.append("stop:done")
+
+    async def _start(_telegram_user_id: int) -> None:
+        order.append("start:start")
+        await asyncio.sleep(5)
+
+    agent.stop = _stop  # type: ignore[method-assign]
+    agent.start = AsyncMock(side_effect=_start)  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    assert order == ["stop:start", "stop:done", "start:start"]
+    assert stop_completed
+
+
+@pytest.mark.asyncio
 async def test_recovery_completes_before_lock_release_unblocks_next_call() -> None:
     """The recovery must run to completion under the lock, so a queued
     second respond() never queries on a stream still holding the first
@@ -828,6 +1008,11 @@ async def test_recovery_completes_before_lock_release_unblocks_next_call() -> No
     agent_a = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=0.05)
     agent_a._client = mock_client
     agent_a._telegram_user_id = 1
+    # The drain terminates on its own here, so recovery never falls back to
+    # stop/start — stub them anyway so a future drain regression fails
+    # cleanly instead of spawning a real CLI subprocess in this unit test.
+    agent_a.stop = AsyncMock()  # type: ignore[method-assign]
+    agent_a.start = AsyncMock()  # type: ignore[method-assign]
 
     agent_b = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
     agent_b._client = mock_client
