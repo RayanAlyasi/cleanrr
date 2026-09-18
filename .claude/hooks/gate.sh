@@ -10,40 +10,36 @@ set -u
 
 # Hook invocations pass JSON on stdin whose "cwd" is the active worktree; the
 # hook process itself may start in the main checkout. A manual run has no stdin.
-input=""
-if [ ! -t 0 ]; then
-  input=$(cat)
+here=$(cd "$(dirname "$0")" && pwd)
+python_bin=$(command -v python || command -v python3)
+dir=$("$python_bin" "$here/hook_field.py" cwd)
+if [ $? -eq 3 ]; then
+  echo "gate: could not parse hook input; refusing to guess which checkout to test." >&2
+  exit 2
 fi
-if [ -n "$input" ]; then
-  dir=$(printf '%s' "$input" | python -c 'import json,sys
-print(json.load(sys.stdin).get("cwd", ""))' 2>/dev/null) || {
-    echo "gate: could not parse hook input; refusing to guess which checkout to test." >&2
-    exit 2
-  }
-  if [ -n "$dir" ]; then
-    command -v cygpath >/dev/null 2>&1 && dir=$(cygpath -u "$dir")
-    cd "$dir" || { echo "gate: cannot cd to $dir" >&2; exit 2; }
-  fi
+if [ -n "$dir" ]; then
+  command -v cygpath >/dev/null 2>&1 && dir=$(cygpath -u "$dir")
+  cd "$dir" || { echo "gate: cannot cd to $dir" >&2; exit 2; }
 fi
 
 # Worktrees share .git but not .venv, so resolve the interpreter from the main
 # checkout. Fall back to whatever python is on PATH.
 main=$(git rev-parse --path-format=absolute --git-common-dir 2>/dev/null)
 main=${main%/.git}
-py=python
+py=$python_bin
 for cand in "$main/.venv/Scripts/python.exe" "$main/.venv/bin/python"; do
   if [ -x "$cand" ]; then py=$cand; break; fi
 done
 
 if [ $# -gt 0 ]; then
-  exec "$py" -m "$@"
+  exec "$py" -m "$@" </dev/null
 fi
 
 status=0
 run() {
   local name=$1; shift
   local out
-  if out=$("$@" 2>&1); then
+  if out=$("$@" 2>&1 </dev/null); then
     echo "ok    $name"
   else
     status=2

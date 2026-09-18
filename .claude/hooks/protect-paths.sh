@@ -9,17 +9,15 @@
 set -u
 mode=${1:-coder}
 
-input=""
-if [ ! -t 0 ]; then
-  input=$(cat)
-fi
-[ -z "$input" ] && exit 0
-path=$(printf '%s' "$input" | python -c 'import json,sys
-print(json.load(sys.stdin).get("tool_input", {}).get("file_path", ""))' 2>/dev/null) || {
+here=$(cd "$(dirname "$0")" && pwd)
+python_bin=$(command -v python || command -v python3)
+path=$("$python_bin" "$here/hook_field.py" tool_input.file_path)
+if [ $? -eq 3 ]; then
   echo "blocked: could not parse the tool input; refusing to guess the path." >&2
   exit 2
-}
+fi
 [ -z "$path" ] && exit 0
+# Windows separators to forward slashes (pattern is one escaped backslash).
 norm=${path//\\//}
 base=${norm##*/}
 

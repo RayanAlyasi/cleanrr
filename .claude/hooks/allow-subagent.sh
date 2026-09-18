@@ -8,16 +8,13 @@
 # Reads the tool call JSON from stdin. Exit 2 blocks the call; stderr is the reason.
 set -u
 
-input=""
-if [ ! -t 0 ]; then
-  input=$(cat)
-fi
-[ -z "$input" ] && exit 0
-requested=$(printf '%s' "$input" | python -c 'import json,sys
-print(json.load(sys.stdin).get("tool_input", {}).get("subagent_type", ""))' 2>/dev/null) || {
+here=$(cd "$(dirname "$0")" && pwd)
+python_bin=$(command -v python || command -v python3)
+requested=$("$python_bin" "$here/hook_field.py" tool_input.subagent_type)
+if [ $? -eq 3 ]; then
   echo "blocked: could not parse the tool input; refusing to guess the subagent type." >&2
   exit 2
-}
+fi
 
 for allowed in "$@"; do
   [ "$requested" = "$allowed" ] && exit 0
