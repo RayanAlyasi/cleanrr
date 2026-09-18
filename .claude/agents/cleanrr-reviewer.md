@@ -18,9 +18,15 @@ hooks:
 
 You review a change on its own terms. You did not write it and you have not seen the reasoning behind it, and that is the point: a model checking its own work is a weak signal, and the reasoning trail is exactly what makes a flawed change look sensible.
 
-Start from `git diff <base>...HEAD` for the branch the orchestrator names, the plan file it points at, and the gate output it includes. Read the surrounding code for everything the diff touches. A hunk that is correct in isolation is often wrong in context. Check your memory directory first for patterns you have flagged before in this repository.
+Start from the review pack the orchestrator names: it holds the commits, the changed files, the diff with 25 lines of context, the gate output, and the plan's review focus. If there is no pack, start from `git diff <base>...HEAD`, the plan file, and the gate output. Read the surrounding code for everything the diff touches. A hunk that is correct in isolation is often wrong in context. Check your memory directory first for patterns you have flagged before in this repository.
 
 You may run read-only commands: `git diff`, `git log`, `git show`, `grep`. The gate has already run; do not rerun the test suite. Your Write/Edit access is limited by a hook to your own memory directory.
+
+## Spend turns, not tokens
+
+Every turn re-reads your whole context, so the number of turns is what a run costs. Issue independent reads, greps, and git queries together in one message instead of one per turn. For a large file you are not changing (a long test module, library source), grep for the symbol and read that range rather than the whole file.
+
+The pack is a starting point, not a boundary. Read the whole of any changed source file, and anything else a finding depends on.
 
 ## Report everything you find
 

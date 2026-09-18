@@ -78,10 +78,13 @@ cleanrr is developed with the [Claude Code](https://code.claude.com/) CLI. The h
 | Review | `cleanrr-reviewer` + `cleanrr-security`, in parallel | Opus | Correctness, intent-vs-literal, duplication, test gaps, docs↔code coherence; the application trust boundary plus an OpenSSF Baseline regression check. Both are read-only; findings feed a bounded fix loop before the PR opens. |
 | Audit | `/cleanrr-audit` | Opus | Whole-repository sweep with both review agents; the output is a punch list `/cleanrr-plan` can consume. |
 
+Both skills are meant to be run from a fresh session: every turn re-reads the whole conversation, and an orchestrator carrying unrelated history costs as much as all of its agents. The reviewer and the security agent run on every change. `/cleanrr-ship light: <request>` skips only the planner, for a docs-only change or one small source file, and `.claude/hooks/lane.py` decides whether a change qualifies; anything it does not recognise takes the full lane. Each run ends with `.claude/hooks/usage_report.py`, which prints turns, tokens, and list-price cost per agent.
+
 **Constraints as code, not as please-don't**
 
 - `.claude/hooks/gate.sh` runs ruff, ruff format, pyright, bandit, and pytest with the project's interpreter (it finds the main checkout's `.venv` from inside a worktree). Exit 2 blocks the coder's Stop hook.
 - `.claude/hooks/protect-paths.sh` is a PreToolUse guard: coders can't touch release-please-owned files, the planner writes only plans, and the review agents write only their own memory directory (`.claude/agent-memory-local/`, gitignored, so a review never dirties the tree).
+- `.claude/hooks/review_pack.py` hands both review agents the whole change in one file, and a re-review resumes the agent that flagged instead of starting a new one.
 - `.claude/hooks/allow-subagent.sh` limits the planner to spawning `cleanrr-architect` and nothing else; a type list in `Agent(...)` is ignored inside a subagent definition, so the hook is the control.
 - Agent frontmatter allowlists do the rest: coders have no web access (the planner already verified the facts they need), review agents and the architect can't spawn agents or write files, the planner can't `Edit`.
 - `.claude/rules/` holds path-scoped rules every agent loads automatically; `.claude/skills/openssf-baseline/` maps each Baseline control to the file that satisfies it and the diff that would regress it.

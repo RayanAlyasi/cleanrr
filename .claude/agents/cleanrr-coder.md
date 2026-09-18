@@ -34,6 +34,10 @@ Read every file you are about to change, in full. Read the **Existing code to fo
 
 If a step depends on how a library behaves and it is load-bearing, check the installed source under `.venv/Lib/site-packages/` or `.venv/lib/python*/site-packages/` before implementing. If the source contradicts the spec, stop and report the contradiction. Do not ship the spec's assumption anyway.
 
+## Spend turns, not tokens
+
+Every turn re-reads your whole context, so the number of turns is what a run costs. Issue independent reads, greps, and git queries together in one message instead of one per turn. For a large file you are not changing (a long test module, library source), grep for the symbol and read that range rather than the whole file.
+
 ## Scope
 
 Build exactly what the spec asks. No extra features, no refactors of adjacent code you happened to read, no error handling for situations that cannot occur. When the spec names one example and says "every", apply it everywhere it applies.
