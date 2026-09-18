@@ -73,6 +73,7 @@ cleanrr is developed with the [Claude Code](https://code.claude.com/) CLI. The h
 | Step | Skill → agent | Model | What it does |
 | --- | --- | --- | --- |
 | Plan | `/cleanrr-plan <request>` → `cleanrr-planner` | Opus | Reads the real code, verifies library/API assumptions against fetched docs, and writes `.claude/plans/<slug>.md`: small task specs grouped into parallel waves with disjoint file sets. |
+| Decide | `cleanrr-planner` → `cleanrr-architect`, on demand | Fable | One hard structural decision at a time (process model, schema, trust boundary, new interface). Returns a short memo the planner copies into the plan. A decision that turns on the owner's money, terms, or product direction is sent back to the owner and blocks `/cleanrr-ship` until answered. |
 | Build | `/cleanrr-ship <plan>` → `cleanrr-coder` × N | Sonnet | One coder per task, each in its own git worktree, all tasks of a wave in parallel. A Stop hook runs the gate, so a coder cannot finish red. The orchestrator merges each wave, re-gates, and cleans up. |
 | Review | `cleanrr-reviewer` + `cleanrr-security`, in parallel | Opus | Correctness, intent-vs-literal, duplication, test gaps, docs↔code coherence; the application trust boundary plus an OpenSSF Baseline regression check. Both are read-only; findings feed a bounded fix loop before the PR opens. |
 | Audit | `/cleanrr-audit` | Opus | Whole-repository sweep with both review agents; the output is a punch list `/cleanrr-plan` can consume. |
@@ -81,7 +82,8 @@ cleanrr is developed with the [Claude Code](https://code.claude.com/) CLI. The h
 
 - `.claude/hooks/gate.sh` runs ruff, ruff format, pyright, bandit, and pytest with the project's interpreter (it finds the main checkout's `.venv` from inside a worktree). Exit 2 blocks the coder's Stop hook.
 - `.claude/hooks/protect-paths.sh` is a PreToolUse guard: coders can't touch release-please-owned files, the planner writes only plans, and the review agents write only their own memory directory.
-- Agent frontmatter allowlists do the rest: coders have no web access (the planner already verified the facts they need), review agents can't spawn agents, the planner can't `Edit`.
+- `.claude/hooks/allow-subagent.sh` limits the planner to spawning `cleanrr-architect` and nothing else; a type list in `Agent(...)` is ignored inside a subagent definition, so the hook is the control.
+- Agent frontmatter allowlists do the rest: coders have no web access (the planner already verified the facts they need), review agents and the architect can't spawn agents or write files, the planner can't `Edit`.
 - `.claude/rules/` holds path-scoped rules every agent loads automatically; `.claude/skills/openssf-baseline/` maps each Baseline control to the file that satisfies it and the diff that would regress it.
 - `worktree.baseRef` is `head` in `.claude/settings.json`, so coder worktrees branch from the feature branch the orchestrator is on, not from `main`.
 

@@ -14,4 +14,6 @@ $ARGUMENTS
 
 Follow your planning contract: explore the real code first, verify every library or API assumption against fetched docs or installed source, split the work into waves of tasks with disjoint file sets, and write the plan to `.claude/plans/<slug>.md`. If the request references an audit or review report, treat each finding as a candidate task and drop the ones that don't survive reading the code.
 
-Return only the plan path and the five-line summary.
+Consult `cleanrr-architect` only for a structural fork your contract lists, never for routine planning.
+
+Return only the plan path, the five-line summary, and the plan's `Status:`.

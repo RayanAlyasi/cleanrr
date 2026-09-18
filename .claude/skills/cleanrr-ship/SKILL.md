@@ -13,7 +13,8 @@ Plan file: `$ARGUMENTS` (if empty, use the newest file in `.claude/plans/`).
 ## 1. Preconditions
 
 - `git status --porcelain` is empty apart from ignored paths, and you are on `main` with `git pull --rebase origin main` clean. Otherwise stop.
-- Read the plan. Extract `Branch:`, `PR title:`, the waves, and every task spec. If a wave has two tasks naming the same file, stop and send the plan back to `/cleanrr-plan`; do not fix it yourself.
+- Read the plan. If `Status:` is `needs-user-decision`, stop and show the open question from its **Decisions** section; the owner answers it in the plan and sets `Status: ready`. Do not choose for them.
+- Extract `Branch:`, `PR title:`, the waves, and every task spec. If a wave has two tasks naming the same file, stop and send the plan back to `/cleanrr-plan`; do not fix it yourself.
 - `git checkout -b <Branch>`.
 
 ## 2. Waves
