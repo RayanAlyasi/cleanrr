@@ -425,6 +425,11 @@ async def _fast_generator(text: str) -> AsyncIterator[AssistantMessage]:
     yield _make_text_message(text)
 
 
+async def _empty_generator() -> AsyncIterator[AssistantMessage]:
+    for _ in ():
+        yield _make_text_message("unreachable")
+
+
 @pytest.mark.asyncio
 async def test_respond_raises_timeout_when_sdk_hangs() -> None:
     agent = Agent(
@@ -436,7 +441,15 @@ async def test_respond_raises_timeout_when_sdk_hangs() -> None:
     )
     mock_client = AsyncMock()
     mock_client.query = AsyncMock()
-    mock_client.receive_response = lambda: _slow_generator()
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        # First call hangs (the abandoned turn); the recovery drain terminates.
+        return _slow_generator() if call_count == 1 else _empty_generator()
+
+    mock_client.receive_response = _receive_response
 
     agent._client = mock_client
     agent._telegram_user_id = 1
@@ -464,6 +477,7 @@ async def test_respond_returns_normally_when_under_timeout() -> None:
     result = await agent.respond(prompt="hello")
 
     assert result == "hello back"
+    mock_client.interrupt.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -604,16 +618,19 @@ async def test_lock_releases_after_timeout() -> None:
 
     call_count = 0
 
-    async def _slow_then_fast() -> AsyncIterator[AssistantMessage]:
+    async def _slow_then_drain_then_fast() -> AsyncIterator[AssistantMessage]:
         nonlocal call_count
         call_count += 1
         if call_count == 1:
             await asyncio.sleep(10)
             yield _make_text_message("never")
+        elif call_count == 2:
+            # The recovery's drain of the abandoned first turn.
+            return
         else:
             yield _make_text_message("second call")
 
-    mock_client.receive_response = _slow_then_fast
+    mock_client.receive_response = _slow_then_drain_then_fast
 
     agent._client = mock_client
     agent._telegram_user_id = 1
@@ -627,6 +644,206 @@ async def test_lock_releases_after_timeout() -> None:
         timeout=5.0,
     )
     assert result == "second call"
+
+
+@pytest.mark.asyncio
+async def test_timeout_interrupts_and_drains_before_falling_back() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+
+    call_count = 0
+    drained_fully = False
+
+    async def _drain_generator() -> AsyncIterator[AssistantMessage]:
+        nonlocal drained_fully
+        yield _make_text_message("aborted turn result")
+        drained_fully = True
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        return _slow_generator() if call_count == 1 else _drain_generator()
+
+    mock_client.receive_response = _receive_response
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    mock_client.interrupt.assert_awaited_once()
+    assert drained_fully
+    agent.stop.assert_not_called()
+    agent.start.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_second_respond_after_timeout_gets_fresh_reply_not_stale_one() -> None:
+    """Regression test: a timed-out turn's leftover ResultMessage must not
+    answer the following respond() call."""
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return _slow_generator()
+        if call_count == 2:
+            return _fast_generator("stale reply")
+        return _fast_generator("fresh reply")
+
+    mock_client.receive_response = _receive_response
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="first")
+
+    result = await agent.respond(prompt="second")
+    assert result == "fresh reply"
+
+
+@pytest.mark.asyncio
+async def test_recovery_falls_back_to_restart_when_drain_overruns(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cleanrr import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_TIMEOUT_RECOVERY_SECONDS", 0.05)
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.05,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    # Hangs on every call, including the drain, so the recovery itself overruns.
+    mock_client.receive_response = lambda: _slow_generator()
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    agent.stop.assert_awaited_once()
+    agent.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_recovery_falls_back_to_restart_when_interrupt_raises() -> None:
+    """The SDK raises a bare Exception (not ClaudeSDKError) on an interrupt
+    control-request timeout — the recovery must still fall back cleanly."""
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+
+    agent.stop.assert_awaited_once()
+    agent.start.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_recovery_completes_before_lock_release_unblocks_next_call() -> None:
+    """The recovery must run to completion under the lock, so a queued
+    second respond() never queries on a stream still holding the first
+    turn's abandoned messages."""
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+    )
+    order: list[str] = []
+
+    async def _query_side_effect(prompt: str, session_id: str) -> None:  # noqa: ARG001
+        order.append(f"query:{prompt}")
+
+    async def _interrupt_side_effect() -> None:
+        order.append("interrupt")
+
+    async def _slow_drain() -> AsyncIterator[AssistantMessage]:
+        await asyncio.sleep(0.2)
+        for _ in ():
+            yield _make_text_message("unreachable")
+
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        order.append("recv")
+        if call_count == 1:
+            return _slow_generator()
+        if call_count == 2:
+            return _slow_drain()
+        return _fast_generator("second call")
+
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock(side_effect=_query_side_effect)
+    mock_client.receive_response = _receive_response
+    mock_client.interrupt = AsyncMock(side_effect=_interrupt_side_effect)
+
+    # agent_a's small timeout triggers the abandoned turn quickly; agent_b's
+    # generous timeout is for its own lock wait, not the query itself — they
+    # share the lock and client so "second" genuinely queues behind "first".
+    agent_a = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=0.05)
+    agent_a._client = mock_client
+    agent_a._telegram_user_id = 1
+
+    agent_b = Agent(identity=MagicMock(spec=Identity), settings=settings, timeout_seconds=5.0)
+    agent_b._client = mock_client
+    agent_b._telegram_user_id = 1
+    agent_b._lock = agent_a._lock
+
+    task_first = asyncio.create_task(agent_a.respond(prompt="first"))
+    await asyncio.sleep(0)  # let task_first acquire the lock and start its query
+
+    result = await agent_b.respond(prompt="second")
+
+    assert result == "second call"
+    with pytest.raises(TimeoutError):
+        await task_first
+
+    assert order == ["query:first", "recv", "interrupt", "recv", "query:second", "recv"]
 
 
 @pytest.mark.asyncio
@@ -667,6 +884,7 @@ async def test_respond_reconnects_once_after_sdk_connection_error() -> None:
     assert result == "recovered"
     agent.stop.assert_awaited_once()
     agent.start.assert_awaited_once()
+    mock_client.interrupt.assert_not_awaited()
 
 
 @pytest.mark.asyncio

@@ -37,6 +37,10 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+# Bounds the post-timeout cleanup below, which runs while the user is still
+# waiting for the "taking too long" reply.
+_TIMEOUT_RECOVERY_SECONDS = 10.0
+
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
 (Plex/Jellyfin alongside Sonarr, Radarr, Overseerr, qBittorrent).
@@ -315,6 +319,36 @@ class Agent:
         self._stack = None
         self._client = None
 
+    async def _interrupt_and_drain(self, client: ClaudeSDKClient) -> None:
+        await client.interrupt()
+        drained = 0
+        async for _ in client.receive_response():
+            drained += 1
+        logger.info("drained %d message(s) from the interrupted turn", drained)
+
+    async def _recover_from_timeout(self) -> None:
+        # Always set alongside self._client in start(), so guaranteed non-None here.
+        telegram_user_id: int = self._telegram_user_id  # type: ignore[assignment]
+
+        client = self._client
+        if client is not None:
+            try:
+                await asyncio.wait_for(
+                    self._interrupt_and_drain(client), timeout=_TIMEOUT_RECOVERY_SECONDS
+                )
+                return
+            except Exception:
+                # interrupt() goes through _send_control_request(timeout=60.0),
+                # which raises a bare Exception (not ClaudeSDKError) if the CLI
+                # never answers — a narrower clause would miss that case.
+                logger.warning(
+                    "interrupt/drain after timeout failed — restarting the client",
+                    exc_info=True,
+                )
+
+        await self.stop()
+        await self.start(telegram_user_id)
+
     async def respond(self, *, prompt: str) -> str:
         if self._client is None:
             raise RuntimeError("Agent.start() must be called before respond()")
@@ -340,21 +374,30 @@ class Agent:
         await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
         try:
             try:
-                return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
-            except ClaudeSDKError:
-                # The CLI subprocess this client fronts has died (crash, OOM,
-                # transient resource pressure) — the SDK never respawns it, so
-                # without this every future message would fail forever until
-                # someone manually restarts the process. One reconnect attempt
-                # before giving up; if this also fails, it propagates and the
-                # caller gets the same graceful "couldn't reach Claude" reply.
-                logger.exception("SDK connection lost mid-query — reconnecting")
+                try:
+                    return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
+                except ClaudeSDKError:
+                    # The CLI subprocess this client fronts has died (crash, OOM,
+                    # transient resource pressure) — the SDK never respawns it, so
+                    # without this every future message would fail forever until
+                    # someone manually restarts the process. One reconnect attempt
+                    # before giving up; if this also fails, it propagates and the
+                    # caller gets the same graceful "couldn't reach Claude" reply.
+                    logger.exception("SDK connection lost mid-query — reconnecting")
 
-                async def _reconnect_and_retry() -> str:
-                    await self.stop()
-                    await self.start(telegram_user_id)
-                    return await _query()
+                    async def _reconnect_and_retry() -> str:
+                        await self.stop()
+                        await self.start(telegram_user_id)
+                        return await _query()
 
-                return await asyncio.wait_for(_reconnect_and_retry(), timeout=self._timeout_seconds)
+                    return await asyncio.wait_for(
+                        _reconnect_and_retry(), timeout=self._timeout_seconds
+                    )
+            except TimeoutError:
+                # The CLI keeps streaming the abandoned turn into the SDK's
+                # shared buffer even after we stop reading it — without this,
+                # the next respond() would read this turn's leftover result.
+                await self._recover_from_timeout()
+                raise
         finally:
             self._lock.release()
