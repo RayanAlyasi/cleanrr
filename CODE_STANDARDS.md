@@ -28,7 +28,7 @@ Default to none. A comment exists only when the *why* is non-obvious: a library 
 ```python
 # Sonarr's queue endpoint filters on seriesIds (plural, array-bound);
 # seriesId is silently ignored and returns the whole instance's queue.
-params={"seriesIds": [series_id], "pageSize": 50},
+params = {"seriesIds": [series_id], "pageSize": 50}
 ```
 
 Docstrings go on public entry points and on classes whose role isn't obvious from the name (`Agent`, `ConfirmationRegistry`). They say what the thing is for, not restate the signature. No Google-style `Args:`/`Returns:` blocks; the types already say that.
