@@ -81,7 +81,7 @@ cleanrr is developed with the [Claude Code](https://code.claude.com/) CLI. The h
 **Constraints as code, not as please-don't**
 
 - `.claude/hooks/gate.sh` runs ruff, ruff format, pyright, bandit, and pytest with the project's interpreter (it finds the main checkout's `.venv` from inside a worktree). Exit 2 blocks the coder's Stop hook.
-- `.claude/hooks/protect-paths.sh` is a PreToolUse guard: coders can't touch release-please-owned files, the planner writes only plans, and the review agents write only their own memory directory.
+- `.claude/hooks/protect-paths.sh` is a PreToolUse guard: coders can't touch release-please-owned files, the planner writes only plans, and the review agents write only their own memory directory (`.claude/agent-memory-local/`, gitignored, so a review never dirties the tree).
 - `.claude/hooks/allow-subagent.sh` limits the planner to spawning `cleanrr-architect` and nothing else; a type list in `Agent(...)` is ignored inside a subagent definition, so the hook is the control.
 - Agent frontmatter allowlists do the rest: coders have no web access (the planner already verified the facts they need), review agents and the architect can't spawn agents or write files, the planner can't `Edit`.
 - `.claude/rules/` holds path-scoped rules every agent loads automatically; `.claude/skills/openssf-baseline/` maps each Baseline control to the file that satisfies it and the diff that would regress it.

@@ -4,8 +4,8 @@ description: Security audit of a cleanrr branch or the whole repository. Covers 
 model: opus
 effort: xhigh
 color: red
-maxTurns: 35
-memory: project
+maxTurns: 55
+memory: local
 skills:
   - openssf-baseline
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write, Edit

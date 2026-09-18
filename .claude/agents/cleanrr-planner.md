@@ -5,7 +5,7 @@ model: opus
 effort: xhigh
 color: purple
 permissionMode: acceptEdits
-maxTurns: 40
+maxTurns: 60
 tools: Read, Grep, Glob, Bash, Write, WebFetch, WebSearch, Agent
 disallowedTools: Edit
 hooks:
