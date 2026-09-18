@@ -903,8 +903,8 @@ async def test_restart_is_bounded_by_timeout_restart_seconds(
     elapsed = time.monotonic() - started_at
     assert elapsed < 1.0
 
-    # Lock released afterward: a following respond() with a working client
-    # proceeds rather than hanging behind the still-pending restart.
+    # Lock released afterward: a following respond() is not blocked behind
+    # the still-pending restart.
     mock_client.receive_response = lambda: _fast_generator("second call")
     mock_client.interrupt = AsyncMock()
     result = await asyncio.wait_for(agent.respond(prompt="second"), timeout=1.0)

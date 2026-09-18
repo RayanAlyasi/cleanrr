@@ -37,13 +37,13 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# Bound the post-timeout cleanup below, all of which runs while the user is
-# still waiting for the "taking too long" reply. The interrupt-and-drain is
-# bounded by the first constant; if that fails, the fallback restart's stop()
-# is bounded by the SDK's own close() escalation (~20s) and start() by the
-# second constant.
+# _TIMEOUT_RESTART_SECONDS exceeds the SDK's own 60s initialize floor
+# (ClaudeSDKClient.connect), so a slow-but-valid start() isn't cancelled.
+# Worst case a timeout holds the lock for drain + stop() + start() =
+# 10 + 20 + 75 = 105s, which must stay under claude_timeout_seconds
+# (default 120s) since a queued respond() waits on the lock that long.
 _TIMEOUT_RECOVERY_SECONDS = 10.0
-_TIMEOUT_RESTART_SECONDS = 30.0
+_TIMEOUT_RESTART_SECONDS = 75.0
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
