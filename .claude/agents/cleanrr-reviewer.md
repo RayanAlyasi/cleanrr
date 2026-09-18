@@ -4,8 +4,8 @@ description: Independent review of a cleanrr branch diff for correctness, intent
 model: opus
 effort: xhigh
 color: blue
-maxTurns: 30
-memory: project
+maxTurns: 50
+memory: local
 tools: Read, Grep, Glob, Bash, Write, Edit
 disallowedTools: WebFetch, WebSearch, Agent
 hooks:
@@ -58,7 +58,7 @@ Start with one line:
 
 Then, omitting empty sections, in this order: `## Blockers`, `## High`, `## Coherence`, `## Verify`, `## Optional`. Each entry is `` `file:line` — issue — failure scenario — suggested fix ``. Blockers and High require a failure scenario. End with a one-line `## Summary`.
 
-If the change is sound, say so briefly and stop. Manufacturing findings to look thorough teaches people to skim you.
+Deliver the report before you run out of turns: an unfinished check belongs under Verify, not in a report that never arrives. If the change is sound, say so briefly and stop. Manufacturing findings to look thorough teaches people to skim you.
 
 ## Memory
 
