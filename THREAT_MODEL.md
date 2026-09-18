@@ -54,7 +54,7 @@ Threats below were identified by tracing three things through the actual code, n
 
 **What**: `/invite <overseerr_username>` (admin-only) generates an 8-character link code, valid for `LINK_CODE_TTL_HOURS` (default 24h), redeemable by *whichever* Telegram account sends `/link <code>` first. There's no binding between "who the admin intended" and "who redeems it" until redemption happens.
 
-**Likelihood**: Low — requires the code to leak or be guessed within the TTL window. The code is generated via `secrets.choice` over a 32-character alphabet at length 8 (`identity.py`'s `_CODE_ALPHABET`/`_CODE_LENGTH`) — not brute-forceable in a 24h window.
+**Likelihood**: Low — requires the code to leak or be guessed within the TTL window. The code is generated via `secrets.choice` over a 31-character alphabet at length 8 (`identity.py`'s `_CODE_ALPHABET`/`_CODE_LENGTH`) — not brute-forceable in a 24h window.
 
 **Impact**: Medium if it happens — the wrong person gets bound to the intended Overseerr account's permissions (can cancel/re-search *that* account's requests).
 
@@ -64,11 +64,11 @@ Threats below were identified by tracing three things through the actual code, n
 
 ### 5. Denial of service via message/action flooding
 
-**What**: Only linked users and admins reach the Agent pool; `on_message` refuses everyone else before `pool.get_or_create` is ever called, so an unlinked stranger can't spawn or reuse an Agent, only trigger a refusal reply.
+**What**: A linked user or admin can send messages as fast as Telegram allows, and each one is a Claude turn on that user's Agent. An unlinked stranger cannot reach Claude or the Agent pool, but can still make the bot send one refusal reply and write one log line per message.
 
 **Existing mitigation** (this is a place where the risk is already actively managed, not just noted): the link gate itself (`identity.get_link` / `settings.admin_telegram_ids`, checked in `on_message` via `_is_authorized`) keeps unauthorized senders out of the Agent pool entirely; `TELEGRAM_MAX_MESSAGE_CHARS` rejects oversized messages before they reach Claude; `AgentPool` caps total concurrent per-user agents; `ConfirmationRegistry` caps both total pending confirmations (100) and per-user pending confirmations (3), specifically to stop "a single noisy client" from exhausting the global slots (see the docstring in `_registry.py`).
 
-**Residual risk**: low. A linked user or admin can still flood the bot within those caps, and an unlinked stranger can still make the bot emit one refusal reply per message — Telegram's own flood limits are the only bound on that. This is the one category where the codebase already treats DoS as a first-class concern with enforced numeric limits, not just documentation.
+**Residual risk**: low. A linked user or admin can still flood the bot within those caps, and an unlinked stranger can still make the bot emit one refusal reply and one log line per message — Telegram's own flood limits are the only bound on that. This is the one category where the codebase already treats DoS as a first-class concern with enforced numeric limits, not just documentation.
 
 ### 6. Supply chain (dependencies, CI/CD, container image)
 
