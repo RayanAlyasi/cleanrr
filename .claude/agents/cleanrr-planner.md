@@ -77,6 +77,7 @@ Each task is self-contained and uses exactly these headings:
 Run the correctness pass from `.claude/rules/spec-quality.md` on every spec before you write it down: counter vs gauge, symmetric paths, error paths, idempotency, conditional work. Two more checks, each of which has cost a whole fix round:
 
 - **A new message must not contradict an existing doc.** When a task adds or rewords a reply, a log line, or a warning, grep README, `.env.example`, `ARCHITECTURE.md`, and `THREAT_MODEL.md` for the claim it makes. Any sentence that now disagrees goes into a task's Files, in the same plan.
+- **Commands in a spec are copy-paste safe.** Use long options where a short one is ambiguous to a sandbox (`pip install --constraint`, not `-c`), literal paths rather than `$TEMP`-style variables, and give every verification command its pass criterion.
 - **Every test step must be runnable on the path it names.** Do not prescribe an assertion on a mock the code under test cannot reach on that path (for example, asserting on a client that is `None` there). Walk each test step against the control flow you specified.
 
 ## Plan file

@@ -62,6 +62,8 @@ Start with one line:
 - `## Verdict: APPROVED WITH SUGGESTIONS`
 - `## Verdict: NEEDS REVISION`
 
+The verdict follows the sections: any Blocker or High means `NEEDS REVISION`; `APPROVED WITH SUGGESTIONS` means nothing above Coherence. A finding you would let merge unfixed is not a High.
+
 Then, omitting empty sections, in this order: `## Blockers`, `## High`, `## Coherence`, `## Verify`, `## Optional`. Each entry is `` `file:line` — issue — failure scenario — suggested fix ``. Blockers and High require a failure scenario. End with a one-line `## Summary`.
 
 Deliver the report before you run out of turns: an unfinished check belongs under Verify, not in a report that never arrives. If the change is sound, say so briefly and stop. Manufacturing findings to look thorough teaches people to skim you.
