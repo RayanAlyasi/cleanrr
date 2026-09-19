@@ -275,22 +275,23 @@ async def _resolve_user_id(
         # unambiguous match on username/plexUsername/jellyfinUsername
         # resolves — a substring `q` hit (Jellyseerr's `q` also matches
         # email), an unfiltered vanilla page, or two accounts sharing a
-        # name (neither fork enforces uniqueness on any of the three) must
-        # never bind the wrong account.
+        # name must never bind the wrong account. `username` is
+        # user-editable and not unique in either fork, so it can equal
+        # another account's `plexUsername` or `jellyfinUsername`.
         for u in users:
             if not _matches(u):
                 continue
             user_id = u.get("id") if isinstance(u, dict) else None
-            if not isinstance(user_id, int):
+            # bool is an int subclass; True would be stored as user 1.
+            if not isinstance(user_id, int) or isinstance(user_id, bool):
                 return None, "parse_error"
             matched_ids.add(user_id)
 
         page_info = user_data.get("pageInfo")
-        total = (
-            page_info.get("results")
-            if isinstance(page_info, dict) and isinstance(page_info.get("results"), int)
-            else None
-        )
+        if total is None and isinstance(page_info, dict):
+            page_total = page_info.get("results")
+            if isinstance(page_total, int):
+                total = page_total
         seen += len(users)
 
         if not (
@@ -309,13 +310,23 @@ async def _resolve_user_id(
             safe_username,
         )
         return None, "user_not_found"
-    if total is not None and seen < total:
-        logger.warning(
-            "overseerr user search stopped after %d of %d users; accounts beyond "
-            "that cannot be resolved",
-            seen,
-            total,
-        )
+    if pages_fetched >= _USER_SEARCH_MAX_PAGES and total is not None and seen < total:
+        if matched_ids:
+            logger.warning(
+                "resolved '%s' to overseerr user %d after scanning %d of %d users; "
+                "a second account with that name beyond that point would not be seen",
+                safe_username,
+                next(iter(matched_ids)),
+                seen,
+                total,
+            )
+        else:
+            logger.warning(
+                "overseerr user search stopped after %d of %d users; accounts beyond "
+                "that cannot be resolved",
+                seen,
+                total,
+            )
     if matched_ids:
         return next(iter(matched_ids)), "ok"
     return None, "user_not_found"

@@ -171,6 +171,41 @@ async def test_resolve_user_id_matched_user_missing_id_key(mock_client: AsyncMoc
 
 
 @pytest.mark.asyncio
+async def test_resolve_user_id_boolean_id_is_rejected(mock_client: AsyncMock) -> None:
+    """`isinstance(True, int)` is `True` in Python — a boolean id must not
+    be accepted as a real Overseerr user id."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"id": True, "username": "dave"}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "dave")
+    assert user_id is None
+    assert label == "parse_error"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_boolean_and_int_match_is_rejected_not_ambiguous(
+    mock_client: AsyncMock,
+) -> None:
+    """A boolean id is rejected before it ever reaches the ambiguity set,
+    so this is a parse error, not a resolved id or an ambiguity warning."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "results": [
+            {"id": True, "username": "dave"},
+            {"id": 1, "username": "dave"},
+        ]
+    }
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "dave")
+    assert user_id is None
+    assert label == "parse_error"
+
+
+@pytest.mark.asyncio
 async def test_resolve_user_id_picks_exact_match_from_unfiltered_results(
     mock_client: AsyncMock,
 ) -> None:
@@ -420,6 +455,94 @@ async def test_resolve_user_id_sweep_stops_at_max_pages(
     assert label == "user_not_found"
     assert mock_client.get.await_count == 5
     assert any("overseerr user search stopped after" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_truncated_sweep_reports_accepted_match(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A match found before the cap still needs the warning: a second
+    account with the same name beyond the cap would go unseen."""
+    pages = []
+    for page_index in range(5):
+        results = [
+            {"id": page_index * 100 + i, "username": f"user{page_index * 100 + i}"}
+            for i in range(100)
+        ]
+        if page_index == 2:
+            results[0] = {"id": 11, "username": "alice"}
+        page = MagicMock()
+        page.status_code = 200
+        page.json.return_value = {"results": results, "pageInfo": {"results": 10000}}
+        pages.append(page)
+    mock_client.get.side_effect = pages
+
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+
+    assert user_id == 11
+    assert label == "ok"
+    assert mock_client.get.await_count == 5
+    assert any(
+        "resolved 'alice' to overseerr user 11" in record.message for record in caplog.records
+    )
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_empty_first_page_no_false_truncation_warning(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An empty page ends the sweep on its own — nothing was cut off by the
+    cap, so it must not be reported as a truncation."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [], "pageInfo": {"results": 99999}}
+    mock_client.get.return_value = resp
+
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+
+    assert user_id is None
+    assert label == "user_not_found"
+    assert mock_client.get.await_count == 1
+    assert not any("stopped after" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_kept_total_survives_missing_page_info(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """The first page's total must not be cleared by a later page that
+    omits `pageInfo`, or the sweep stops early with no warning."""
+    page_one = MagicMock()
+    page_one.status_code = 200
+    page_one.json.return_value = {
+        "results": [{"id": i, "username": f"user{i}"} for i in range(100)],
+        "pageInfo": {"results": 10000},
+    }
+    later_pages = []
+    for page_index in range(1, 5):
+        page = MagicMock()
+        page.status_code = 200
+        page.json.return_value = {
+            "results": [
+                {"id": page_index * 100 + i, "username": f"user{page_index * 100 + i}"}
+                for i in range(100)
+            ]
+        }
+        later_pages.append(page)
+    mock_client.get.side_effect = [page_one, *later_pages]
+
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+
+    assert user_id is None
+    assert label == "user_not_found"
+    assert mock_client.get.await_count == 5
+    assert any(
+        "overseerr user search stopped after 500 of 10000" in record.message
+        for record in caplog.records
+    )
 
 
 @pytest.mark.asyncio
