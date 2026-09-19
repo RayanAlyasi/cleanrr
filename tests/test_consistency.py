@@ -211,3 +211,17 @@ def test_semgrep_job_installs_with_the_constraints_file() -> None:
     assert "pip install semgrep" not in text, (
         "ci.yml must not fall back to a bare `pip install semgrep`"
     )
+
+
+def test_ci_only_pins_are_installed_by_a_ci_job() -> None:
+    workflow_text = CI_WORKFLOW.read_text(encoding="utf-8")
+    declared = _declared_requirements()
+    for name in sorted(_CI_ONLY_PINS):
+        assert f"pip install -c constraints.txt {name}" in workflow_text, (
+            f"{name} is in _CI_ONLY_PINS but no ci.yml job installs it with "
+            f"`pip install -c constraints.txt {name}`"
+        )
+        assert name not in declared, (
+            f"{name} is in _CI_ONLY_PINS but is also declared in pyproject.toml "
+            "— it isn't CI-only, drop it from _CI_ONLY_PINS"
+        )
