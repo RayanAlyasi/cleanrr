@@ -20,13 +20,13 @@ Source: `ossf/security-baseline` `baseline/OSPS-*.yaml` (fetched 2026-09-15). On
 | BR-02.01 (L2) | Unique version per release | release-please + `hatch-vcs` tags | Hand edits to `.release-please-manifest.json`; a tag that isn't PEP 440 |
 | BR-03.01 / 03.02 | Official channels and distribution over HTTPS with MITM protection | README links, GHCR over TLS | An `http://` link to a project channel or download |
 | BR-04.01 (L2) | Release contains a change log | release-please generates `CHANGELOG.md` from Conventional Commits | Hand edits to `CHANGELOG.md`; a user-visible change committed as `chore:` |
-| BR-05.01 (L2) | Standard dependency tooling | `pyproject.toml` + pip; Dependabot | A vendored copy of a library; a `requirements.txt` that drifts from `pyproject.toml` |
+| BR-05.01 (L2) | Standard dependency tooling | `pyproject.toml` ranges + `constraints.txt` exact pins + Dependabot | A vendored copy of a library, or a `constraints.txt` pin that drifts from `pyproject.toml` (guarded by `tests/test_consistency.py`) |
 | BR-06.01 (L2) | Releases signed | `release.yml` cosign keyless step, `id-token: write` on that job only | Removing the cosign step, or dropping `id-token: write` |
 | BR-07.01 | No secrets in VCS | gitleaks in CI and pre-commit; `.env` gitignored; `.env.example` has empty values | A token-shaped string in any file; `.env` un-ignored; a real key in `.env.example` |
 | DO-01.01 | User guide for all basic functionality | README "What it does today", "Commands", "Configuration" | A new command, tool, or Settings field without its README row |
 | DO-02.01 | Defect reporting guide | CONTRIBUTING "Reporting bugs" | Section removed |
 | DO-06.01 (L2) | Dependency selection and tracking described | CONTRIBUTING "Dependency management"; `dependabot.yml` with `cooldown` | Removing the cooldown; adding an ecosystem without documenting it |
-| DO-07.01 (L2) | Build instructions | README "Quick start", CONTRIBUTING "Development setup", `Dockerfile` | A new build step or required env var not documented |
+| DO-07.01 (L2) | Build instructions | README "Quick start", CONTRIBUTING "Development setup", `Dockerfile`, `constraints.txt` | A new build step or required env var not documented |
 | GV-01.01 / 01.02 (L2) | Members with sensitive access, and their roles | `MAINTAINERS.md` | A maintainer change without updating the file |
 | GV-02.01 | Public discussion mechanism | GitHub issues enabled | out-of-band |
 | GV-03.01 / 03.02 (L2) | Contribution process and contributor guide | `CONTRIBUTING.md` | Quality bar or PR steps removed or made inaccurate |
@@ -51,9 +51,9 @@ Source: `ossf/security-baseline` `baseline/OSPS-*.yaml` (fetched 2026-09-15). On
 - Every `uses:` in `.github/workflows/` is pinned to a 40-hex commit SHA with a version comment. A tag or branch reference is a finding.
 - `Dockerfile` `FROM` keeps both the tag and the `@sha256:` digest (Dependabot needs the tag to compute bumps).
 - `dependabot.yml` keeps `cooldown.default-days` on every ecosystem.
-- `release.yml` keeps the Trivy scan with `exit-code: "1"` on CRITICAL/HIGH and the pip/setuptools strip in `Dockerfile` that made it pass.
+- `release.yml` keeps the Trivy scan with `exit-code: "1"` on CRITICAL/HIGH and the pip/setuptools strip in `Dockerfile` that made it pass; `docker.yml` runs the same gate (`exit-code: "1"`, CRITICAL/HIGH, `ignore-unfixed`) on every pull request, and the two must not diverge.
 - `semgrep ci` keeps `--no-suppress-errors`; without it a failed ruleset fetch passes green.
-- `ruff`, `pyright` (strict), and `bandit -ll` stay blocking in `ci.yml`. New functionality lands with tests in the same change (badge criterion `tests_are_added`).
+- `ruff`, `pyright` (strict), and `bandit -ll` stay blocking in `ci.yml`, their versions pinned in `constraints.txt` and installed with `-c`. New functionality lands with tests in the same change (badge criterion `tests_are_added`).
 - Random values for link codes and confirmation ids come from `secrets`, never `random` (badge criterion `crypto_random`).
 
 ## How to report

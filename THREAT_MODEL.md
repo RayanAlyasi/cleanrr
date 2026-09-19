@@ -72,7 +72,7 @@ Threats below were identified by tracing three things through the actual code, n
 
 ### 6. Supply chain (dependencies, CI/CD, container image)
 
-Covered in depth by the CI/CD security posture rather than restated here: secret scanning (gitleaks), two independent SAST engines (semgrep, CodeQL), dependency vulnerability scanning (pip-audit, Dependabot with a 7-day cooldown), every GitHub Action pinned to a commit SHA, signed release images (Sigstore/cosign, keyless), and a container image stripped of build-only tooling (`pip`/`setuptools`/`wheel`) after install specifically because a real CVE was found in `pip`'s own vendored dependencies during this project's own hardening pass. See `.github/workflows/` and `CONTRIBUTING.md`'s "Dependency management" section.
+Covered in depth by the CI/CD security posture rather than restated here: secret scanning (gitleaks), two independent SAST engines (semgrep, CodeQL), dependency vulnerability scanning (pip-audit, Dependabot with a 7-day cooldown), direct dependency versions pinned in `constraints.txt` so CI, the release image, and a contributor's venv install the same versions, every GitHub Action pinned to a commit SHA, signed release images (Sigstore/cosign, keyless), the image built and Trivy-scanned on every pull request rather than only at release — the gap that let a release build fail its scan unnoticed — and a container image stripped of build-only tooling (`pip`/`setuptools`/`wheel`) after install specifically because a real CVE was found in `pip`'s own vendored dependencies during this project's own hardening pass. See `.github/workflows/` and `CONTRIBUTING.md`'s "Dependency management" section.
 
 ## Explicitly out of scope
 
