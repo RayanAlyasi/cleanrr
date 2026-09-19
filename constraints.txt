@@ -1,0 +1,20 @@
+# Exact versions CI, the release image and a local venv install.
+# pyproject.toml keeps the compatible ranges; Dependabot bumps these pins.
+# ruff's version is mirrored by the ruff-pre-commit rev in
+# .pre-commit-config.yaml; tests/test_consistency.py keeps the two equal.
+aiosqlite==0.21.0
+bandit==1.9.4
+claude-agent-sdk==0.2.126
+httpx==0.28.1
+packaging==26.2
+pre-commit==4.6.1
+prometheus-client==0.22.1
+pydantic==2.13.4
+pydantic-settings==2.14.2
+pyright==1.1.411
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+python-telegram-bot==22.8
+ruff==0.16.8
+semgrep==1.177.0
