@@ -124,6 +124,32 @@ async def test_unresolvable_username_stays_pending(
     assert "@alice" in caplog.text
     assert "http_error" in caplog.text
     assert "stay on username lookup" in caplog.text
+    assert "re-invited" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_ambiguous_username_tells_operator_to_reinvite(
+    mock_identity: MagicMock,
+    mock_client: AsyncMock,
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    mock_identity.links_needing_overseerr_user_id = AsyncMock(return_value=[_link(1, "alice")])
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.link_migration"),
+        patch(
+            "cleanrr.link_migration._resolve_user_id",
+            AsyncMock(return_value=(None, "user_not_found")),
+        ),
+    ):
+        result = await backfill_overseerr_user_ids(mock_identity, mock_client, settings)
+
+    mock_identity.record_overseerr_user_id.assert_not_awaited()
+    assert result == BackfillResult(0, 1)
+    assert "no single overseerr user matches @alice exactly" in caplog.text
+    assert "re-invited" in caplog.text
+    assert "stay on username lookup" not in caplog.text
 
 
 @pytest.mark.asyncio
@@ -201,24 +227,25 @@ async def test_second_run_with_nothing_left_issues_no_lookup(
         "cleanrr.link_migration._resolve_user_id", AsyncMock(return_value=(42, "ok"))
     ) as mock_resolve:
         first = await backfill_overseerr_user_ids(mock_identity, mock_client, settings)
-    assert first == BackfillResult(1, 0)
+        assert first == BackfillResult(1, 0)
 
-    mock_identity.links_needing_overseerr_user_id = AsyncMock(return_value=[])
-    mock_resolve.reset_mock()
-    second = await backfill_overseerr_user_ids(mock_identity, mock_client, settings)
+        mock_identity.links_needing_overseerr_user_id = AsyncMock(return_value=[])
+        mock_resolve.reset_mock()
+        second = await backfill_overseerr_user_ids(mock_identity, mock_client, settings)
 
-    assert second == BackfillResult(0, 0)
-    mock_resolve.assert_not_awaited()
+        assert second == BackfillResult(0, 0)
+        mock_resolve.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_username_newline_is_stripped_from_the_log(
+async def test_username_control_chars_and_length_are_sanitized_in_the_log(
     mock_identity: MagicMock,
     mock_client: AsyncMock,
     settings: Settings,
     caplog: pytest.LogCaptureFixture,
 ) -> None:
-    mock_identity.links_needing_overseerr_user_id = AsyncMock(return_value=[_link(1, "ali\nce")])
+    username = "ali\nce\x1b[31m" + "x" * 100
+    mock_identity.links_needing_overseerr_user_id = AsyncMock(return_value=[_link(1, username)])
 
     with (
         caplog.at_level(logging.WARNING, logger="cleanrr.link_migration"),
@@ -229,4 +256,7 @@ async def test_username_newline_is_stripped_from_the_log(
     ):
         await backfill_overseerr_user_ids(mock_identity, mock_client, settings)
 
-    assert all("\n" not in record.getMessage() for record in caplog.records)
+    assert all(c.isprintable() for record in caplog.records for c in record.getMessage())
+    expected = "".join(c for c in username if c.isprintable())[:32]
+    assert expected in caplog.text
+    assert "x" * 100 not in caplog.text

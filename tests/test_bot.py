@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -351,6 +352,42 @@ async def test_on_startup_backfill_timeout_does_not_stop_startup(
         patch("cleanrr.bot.backfill_overseerr_user_ids", AsyncMock(side_effect=TimeoutError)),
     ):
         await _on_startup(app)
+
+    assert "link migration timed out" in caplog.text
+    app.bot.set_my_commands.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_backfill_timeout_is_enforced_by_wait_for(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    async def _slow_backfill(*_args: object, **_kwargs: object) -> BackfillResult:
+        await asyncio.sleep(0.5)
+        return BackfillResult(0, 0)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+        patch("cleanrr.bot.backfill_overseerr_user_ids", _slow_backfill),
+        patch("cleanrr.bot._BACKFILL_TIMEOUT_SECONDS", 0.01),
+    ):
+        await asyncio.wait_for(_on_startup(app), timeout=2)
 
     assert "link migration timed out" in caplog.text
     app.bot.set_my_commands.assert_awaited_once()

@@ -50,9 +50,9 @@ async def backfill_overseerr_user_ids(
 
     migrated = 0
     for username, rows in by_username.items():
-        # Strip newlines so a hostile username can't inject fake log lines —
-        # same guard as cleanrr/identity.py.
-        safe_username = username.replace("\n", " ").replace("\r", " ")
+        # Non-printable chars can't reach a log line — same guard as
+        # cleanrr/handlers.py.
+        safe_username = "".join(c for c in username if c.isprintable())[:32]
         try:
             user_id, status = await _resolve_user_id(client, base_url, username)
         except Exception:
@@ -61,13 +61,21 @@ async def backfill_overseerr_user_ids(
             )
             continue
         if user_id is None:
-            logger.warning(
-                "link migration: couldn't resolve overseerr user @%s (%s); %d link(s) stay on"
-                " username lookup until it resolves",
-                safe_username,
-                status,
-                len(rows),
-            )
+            if status == "user_not_found":
+                logger.warning(
+                    "link migration: no single overseerr user matches @%s exactly; %d link(s)"
+                    " cannot reach their requests until re-invited with /invite",
+                    safe_username,
+                    len(rows),
+                )
+            else:
+                logger.warning(
+                    "link migration: couldn't resolve overseerr user @%s (%s); %d link(s) stay on"
+                    " username lookup until it resolves",
+                    safe_username,
+                    status,
+                    len(rows),
+                )
             continue
         for row in rows:
             if await identity.record_overseerr_user_id(row, user_id):
