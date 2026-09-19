@@ -229,7 +229,7 @@ async def test_on_startup_logs_admin_count_not_ids(
     ):
         await _on_startup(app)
 
-    assert "2" in caplog.text
+    assert "2 admin Telegram ID(s) configured" in caplog.text
     assert "424242" not in caplog.text
     assert "515151" not in caplog.text
 

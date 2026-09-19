@@ -1327,7 +1327,7 @@ async def test_rebuild_is_bounded_and_does_not_trigger_timeout_recovery(
 ) -> None:
     """The rebuild sits outside the except TimeoutError arm: a hung start()
     is bounded by _TIMEOUT_RESTART_SECONDS alone and never re-enters
-    _recover_from_timeout (no stop()/interrupt())."""
+    _recover_from_timeout (no stop())."""
     from cleanrr import agent as agent_module
 
     monkeypatch.setattr(agent_module, "_TIMEOUT_RESTART_SECONDS", 0.05)
@@ -1343,8 +1343,6 @@ async def test_rebuild_is_bounded_and_does_not_trigger_timeout_recovery(
     agent._client = None
     agent.stop = AsyncMock()  # type: ignore[method-assign]
 
-    mock_client = AsyncMock()
-
     async def _hang(_telegram_user_id: int) -> None:
         await asyncio.sleep(5)
 
@@ -1357,7 +1355,6 @@ async def test_rebuild_is_bounded_and_does_not_trigger_timeout_recovery(
 
     assert elapsed < 1.0
     agent.stop.assert_not_awaited()
-    mock_client.interrupt.assert_not_awaited()
 
     # Lock released afterward: a following respond() with a working start returns.
     async def _start_working(_telegram_user_id: int) -> None:
