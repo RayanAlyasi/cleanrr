@@ -1146,3 +1146,247 @@ async def test_concurrent_users_on_separate_agents_dont_block_each_other() -> No
 
     result_a = await task_a
     assert result_a == "user a done"
+
+
+@pytest.mark.asyncio
+async def test_respond_rebuilds_client_when_a_previous_restart_failed() -> None:
+    """Regression (#106): a client left None by a previous failed restart must
+    heal on the next message rather than error forever."""
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._telegram_user_id = 1
+    agent._client = None
+
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _fast_generator("rebuilt reply")
+
+    async def _start(_telegram_user_id: int) -> None:
+        agent._client = mock_client
+
+    agent.start = AsyncMock(side_effect=_start)  # type: ignore[method-assign]
+
+    result = await agent.respond(prompt="hi")
+
+    assert result == "rebuilt reply"
+    agent.start.assert_awaited_once_with(1)
+
+
+@pytest.mark.asyncio
+async def test_respond_after_failed_post_timeout_restart_recovers_on_next_message() -> None:
+    """The #106 regression end to end: a post-timeout restart that fails
+    leaves _client None, but the very next message still recovers."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _slow_generator()
+    mock_client.interrupt = AsyncMock(side_effect=Exception("Control request timeout: interrupt"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+
+    async def _stop() -> None:
+        agent._client = None
+
+    agent.stop = AsyncMock(side_effect=_stop)  # type: ignore[method-assign]
+    agent.start = AsyncMock(side_effect=CLIConnectionError("boom"))  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="first")
+
+    assert agent._client is None
+
+    working_client = AsyncMock()
+    working_client.query = AsyncMock()
+    working_client.receive_response = lambda: _fast_generator("recovered reply")
+
+    async def _start_working(_telegram_user_id: int) -> None:
+        agent._client = working_client
+
+    agent.start = AsyncMock(side_effect=_start_working)  # type: ignore[method-assign]
+
+    result = await agent.respond(prompt="second")
+    assert result == "recovered reply"
+
+
+@pytest.mark.asyncio
+async def test_queued_respond_rebuilds_instead_of_crashing_on_a_none_client() -> None:
+    """One Agent, two concurrent respond() calls — the real concurrent_updates(True)
+    shape. Task A's turn times out and its post-timeout restart fails, clearing
+    _client; task B queued behind it on the same lock must rebuild rather than
+    crash on the now-None client."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.2,
+    )
+    hanging_client = AsyncMock()
+    hanging_client.query = AsyncMock()
+    hanging_client.receive_response = lambda: _slow_generator()
+    hanging_client.interrupt = AsyncMock(
+        side_effect=Exception("Control request timeout: interrupt")
+    )
+
+    agent._client = hanging_client
+    agent._telegram_user_id = 1
+
+    async def _stop() -> None:
+        agent._client = None
+
+    agent.stop = AsyncMock(side_effect=_stop)  # type: ignore[method-assign]
+
+    rebuilt_client = AsyncMock()
+    rebuilt_client.query = AsyncMock()
+    rebuilt_client.receive_response = lambda: _fast_generator("queued reply")
+
+    start_calls = 0
+
+    async def _start(_telegram_user_id: int) -> None:
+        nonlocal start_calls
+        start_calls += 1
+        if start_calls == 1:
+            raise CLIConnectionError("boom")
+        agent._client = rebuilt_client
+
+    agent.start = AsyncMock(side_effect=_start)  # type: ignore[method-assign]
+
+    task_a = asyncio.create_task(agent.respond(prompt="first"))
+    await asyncio.sleep(0)  # let task_a acquire the lock and start its query
+
+    # Give task_b's own lock-acquire deadline a head start over task_a's
+    # timeout, so task_a's (near-instant) recovery can't race task_b's own
+    # wait_for(lock.acquire()) expiring first.
+    await asyncio.sleep(0.05)
+
+    task_b = asyncio.create_task(agent.respond(prompt="second"))
+    await asyncio.sleep(0)  # let task_b queue on the still-held lock
+
+    with pytest.raises(TimeoutError):
+        await task_a
+
+    result_b = await task_b
+    assert result_b == "queued reply"
+
+
+@pytest.mark.asyncio
+async def test_respond_propagates_when_the_rebuild_fails_and_retries_next_message() -> None:
+    """A rebuild failure surfaces the real error (not RuntimeError/TimeoutError)
+    and is retried on the next message rather than latched off."""
+    from claude_agent_sdk import CLIConnectionError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._telegram_user_id = 1
+    agent._client = None
+    agent.start = AsyncMock(side_effect=CLIConnectionError("boom"))  # type: ignore[method-assign]
+
+    with pytest.raises(CLIConnectionError):
+        await agent.respond(prompt="first")
+
+    assert agent._client is None
+
+    working_client = AsyncMock()
+    working_client.query = AsyncMock()
+    working_client.receive_response = lambda: _fast_generator("healed reply")
+
+    async def _start_working(_telegram_user_id: int) -> None:
+        agent._client = working_client
+
+    agent.start.side_effect = _start_working
+
+    result = await agent.respond(prompt="second")
+    assert result == "healed reply"
+    assert agent.start.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_rebuild_is_bounded_and_does_not_trigger_timeout_recovery(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The rebuild sits outside the except TimeoutError arm: a hung start()
+    is bounded by _TIMEOUT_RESTART_SECONDS alone and never re-enters
+    _recover_from_timeout (no stop())."""
+    from cleanrr import agent as agent_module
+
+    monkeypatch.setattr(agent_module, "_TIMEOUT_RESTART_SECONDS", 0.05)
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._telegram_user_id = 1
+    agent._client = None
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+
+    async def _hang(_telegram_user_id: int) -> None:
+        await asyncio.sleep(5)
+
+    agent.start = AsyncMock(side_effect=_hang)  # type: ignore[method-assign]
+
+    started_at = time.monotonic()
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
+    elapsed = time.monotonic() - started_at
+
+    assert elapsed < 1.0
+    agent.stop.assert_not_awaited()
+
+    # Lock released afterward: a following respond() with a working start returns.
+    async def _start_working(_telegram_user_id: int) -> None:
+        working_client = AsyncMock()
+        working_client.query = AsyncMock()
+        working_client.receive_response = lambda: _fast_generator("second call")
+        agent._client = working_client
+
+    agent.start = AsyncMock(side_effect=_start_working)  # type: ignore[method-assign]
+
+    result = await asyncio.wait_for(agent.respond(prompt="second"), timeout=1.0)
+    assert result == "second call"
+
+
+@pytest.mark.asyncio
+async def test_respond_does_not_rebuild_when_the_client_is_healthy() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _fast_generator("hello back")
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    result = await agent.respond(prompt="hello")
+
+    assert result == "hello back"
+    agent.start.assert_not_awaited()

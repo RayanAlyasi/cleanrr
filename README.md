@@ -98,7 +98,7 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | Variable | Purpose |
 | --- | --- |
 | `TELEGRAM_BOT_TOKEN` | From @BotFather. |
-| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs allowed to run `/invite` and chat without a link. Left empty, nobody can chat and no link codes can be issued. |
+| `ADMIN_TELEGRAM_IDS` | Comma-separated Telegram user IDs allowed to run `/invite` and chat without a link. Left empty, `/invite` is disabled and no link codes can be issued, so no new user can be linked; already-linked users keep their access. |
 
 ### Authentication — set exactly one
 

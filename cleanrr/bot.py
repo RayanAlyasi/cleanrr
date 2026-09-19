@@ -98,6 +98,14 @@ async def _on_startup(app: Application) -> None:
     await identity.start()
     await app.bot.set_my_commands(BOT_COMMANDS)
     settings: Settings = app.bot_data[SETTINGS_KEY]
+    if settings.admin_telegram_ids:
+        logger.info("%d admin Telegram ID(s) configured", len(settings.admin_telegram_ids))
+    else:
+        logger.warning(
+            "ADMIN_TELEGRAM_IDS is empty — /invite is disabled, so no new user can be "
+            "linked and nobody can reach the admin-only tools. Already-linked users can "
+            "still chat. Set it in .env (DM @userinfobot for your ID) and restart."
+        )
     if settings.metrics_enabled:
         metrics.start(settings.metrics_port, str(settings.metrics_bind_address))
         metrics.linked_users.set(await identity.user_count())
