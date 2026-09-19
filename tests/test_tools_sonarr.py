@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools.sonarr import build_tools
 
 
@@ -26,7 +26,14 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def mock_identity() -> MagicMock:
-    return MagicMock(spec=Identity)
+    ident = MagicMock(spec=Identity)
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
+    return ident
 
 
 @pytest.fixture
@@ -68,8 +75,6 @@ async def test_get_show_status_not_a_show(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -98,8 +103,6 @@ async def test_get_show_status_not_in_sonarr(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -129,14 +132,52 @@ async def test_get_show_status_not_in_sonarr(
 
 
 @pytest.mark.asyncio
+async def test_get_show_status_stored_id_skips_user_search(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {"id": 1, "status": 2, "media": {"title": "The Bear", "status": 5, "tvdbId": 123}}
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = []
+
+    mock_overseerr_client.get.return_value = req_resp
+    mock_sonarr_client.get.return_value = series_resp
+
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
+    get_show_status = tools[0]
+
+    result = await get_show_status.handler({"title": "The Bear"})
+
+    assert "hasn't picked it up" in result["content"][0]["text"]
+    assert mock_overseerr_client.get.await_count == 1
+    urls = [call.args[0] for call in mock_overseerr_client.get.await_args_list]
+    assert urls == ["http://overseerr:5055/api/v1/user/7/requests"]
+
+
+@pytest.mark.asyncio
 async def test_get_show_status_all_downloaded(
     mock_sonarr_client: AsyncMock,
     mock_overseerr_client: AsyncMock,
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -186,8 +227,6 @@ async def test_get_show_status_partial_with_queue(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -238,8 +277,6 @@ async def test_get_show_status_nothing_yet(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -285,8 +322,6 @@ async def test_get_show_status_partial_no_queue(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -332,8 +367,6 @@ async def test_get_show_status_queue_fetch_fails_still_returns_series(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -382,8 +415,6 @@ async def test_get_show_status_queue_malformed_json_still_returns_series(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -433,8 +464,6 @@ async def test_get_show_status_queue_fetch_raises_still_returns_series(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -497,7 +526,7 @@ async def test_get_show_status_unlinked_user(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
     tools = build_tools(
         mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
     )
@@ -514,7 +543,6 @@ async def test_get_show_status_empty_input(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     tools = build_tools(
         mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
     )
@@ -531,7 +559,6 @@ async def test_get_show_status_user_not_found(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 404
     mock_overseerr_client.get.return_value = user_resp
@@ -552,7 +579,6 @@ async def test_get_show_status_overseerr_http_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 500
     mock_overseerr_client.get.return_value = user_resp
@@ -573,7 +599,6 @@ async def test_get_show_status_overseerr_parse_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.side_effect = ValueError("bad json")
@@ -595,8 +620,6 @@ async def test_get_show_status_no_match(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -627,8 +650,6 @@ async def test_get_show_status_multi_match(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -671,8 +692,6 @@ async def test_get_show_status_series_http_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -708,8 +727,6 @@ async def test_get_show_status_series_parse_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -746,8 +763,6 @@ async def test_get_show_status_series_not_dict(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -784,8 +799,6 @@ async def test_get_show_status_series_missing_id(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -822,8 +835,6 @@ async def test_get_show_status_sonarr_http_exception(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}

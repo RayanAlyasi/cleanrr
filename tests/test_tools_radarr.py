@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools.radarr import build_tools
 
 
@@ -26,7 +26,14 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def mock_identity() -> MagicMock:
-    return MagicMock(spec=Identity)
+    ident = MagicMock(spec=Identity)
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
+    return ident
 
 
 @pytest.fixture
@@ -101,7 +108,7 @@ async def test_get_movie_status_unlinked_user(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
     tools = build_tools(
         mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
     )
@@ -118,7 +125,6 @@ async def test_get_movie_status_empty_input(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     tools = build_tools(
         mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
     )
@@ -135,7 +141,6 @@ async def test_get_movie_status_user_not_found(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 404
     mock_overseerr_client.get.return_value = user_resp
@@ -156,7 +161,6 @@ async def test_get_movie_status_overseerr_http_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 500
     mock_overseerr_client.get.return_value = user_resp
@@ -177,7 +181,6 @@ async def test_get_movie_status_overseerr_parse_error(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.side_effect = ValueError("bad json")
@@ -199,8 +202,6 @@ async def test_get_movie_status_no_match(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -229,8 +230,6 @@ async def test_get_movie_status_multi_match(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -274,8 +273,6 @@ async def test_get_movie_status_not_a_movie(
     settings: Settings,
 ) -> None:
     """Overseerr request has tvdbId but no tmdbId → not_a_movie."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -311,7 +308,6 @@ async def test_get_movie_status_tmdb_id_wrong_type(
     settings: Settings,
 ) -> None:
     """tmdbId present but not int → parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -346,8 +342,6 @@ async def test_get_movie_status_not_in_radarr(
     settings: Settings,
 ) -> None:
     """Radarr returns empty array → not_in_radarr."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -366,6 +360,39 @@ async def test_get_movie_status_not_in_radarr(
 
 
 @pytest.mark.asyncio
+async def test_get_movie_status_stored_id_skips_user_search(
+    mock_radarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+    _, req_resp = _make_overseerr_ok()
+    mock_overseerr_client.get.return_value = req_resp
+
+    movie_resp = MagicMock()
+    movie_resp.status_code = 200
+    movie_resp.json.return_value = []
+    mock_radarr_client.get.return_value = movie_resp
+
+    tools = build_tools(
+        mock_radarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
+    get_movie_status = tools[0]
+
+    result = await get_movie_status.handler({"title": "Dune"})
+
+    assert "hasn't picked it up" in result["content"][0]["text"]
+    assert mock_overseerr_client.get.await_count == 1
+    urls = [call.args[0] for call in mock_overseerr_client.get.await_args_list]
+    assert urls == ["http://overseerr:5055/api/v1/user/7/requests"]
+
+
+@pytest.mark.asyncio
 async def test_get_movie_status_radarr_http_error(
     mock_radarr_client: AsyncMock,
     mock_overseerr_client: AsyncMock,
@@ -373,8 +400,6 @@ async def test_get_movie_status_radarr_http_error(
     settings: Settings,
 ) -> None:
     """500 on movie fetch → http_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -400,8 +425,6 @@ async def test_get_movie_status_radarr_parse_error(
     settings: Settings,
 ) -> None:
     """Malformed JSON from Radarr movie endpoint → parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -428,8 +451,6 @@ async def test_get_movie_status_movie_not_dict(
     settings: Settings,
 ) -> None:
     """Radarr returns list whose first element is not a dict → parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -456,8 +477,6 @@ async def test_get_movie_status_movie_missing_id(
     settings: Settings,
 ) -> None:
     """Radarr movie dict missing id field → parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -484,8 +503,6 @@ async def test_get_movie_status_downloaded(
     settings: Settings,
 ) -> None:
     """hasFile=True → 'Dune (2021) is downloaded.'"""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -517,8 +534,6 @@ async def test_get_movie_status_downloading(
     settings: Settings,
 ) -> None:
     """hasFile=False, queue has records → 'downloading.'"""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok(title="The Batman")
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -557,8 +572,6 @@ async def test_get_movie_status_nothing_yet(
     settings: Settings,
 ) -> None:
     """hasFile=False, empty queue → 'nothing yet'"""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok(title="Oppenheimer")
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -594,8 +607,6 @@ async def test_get_movie_status_queue_fetch_fails_still_returns_movie(
     settings: Settings,
 ) -> None:
     """Queue 500 fallback — still returns movie-level summary."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -625,8 +636,6 @@ async def test_get_movie_status_queue_malformed_json_still_returns_movie(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -657,8 +666,6 @@ async def test_get_movie_status_queue_fetch_raises_still_returns_movie(
     mock_identity: MagicMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
 
@@ -686,8 +693,6 @@ async def test_get_movie_status_radarr_http_exception(
     settings: Settings,
 ) -> None:
     """httpx.ConnectError → http_error."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp, req_resp = _make_overseerr_ok()
     mock_overseerr_client.get.side_effect = [user_resp, req_resp]
     mock_radarr_client.get.side_effect = httpx.ConnectError("connection refused")

@@ -1,13 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
 import pytest
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools._user_request import (
     _fetch_media_details,
     _fetch_media_title,
@@ -32,7 +33,14 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def mock_identity() -> MagicMock:
-    return MagicMock(spec=Identity)
+    ident = MagicMock(spec=Identity)
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
+    return ident
 
 
 @pytest.fixture
@@ -336,8 +344,7 @@ async def test_find_user_request_not_configured(mock_identity: MagicMock) -> Non
 async def test_find_user_request_unlinked_user(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
-
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
     result = await find_user_request(
         mock_client, mock_identity, settings, "Dune", telegram_user_id=1
     )
@@ -348,8 +355,6 @@ async def test_find_user_request_unlinked_user(
 async def test_find_user_request_empty_title(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     result = await find_user_request(
         mock_client, mock_identity, settings, "   ", telegram_user_id=1
     )
@@ -360,8 +365,6 @@ async def test_find_user_request_empty_title(
 async def test_find_user_request_exact_match_returns_request(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -383,11 +386,141 @@ async def test_find_user_request_exact_match_returns_request(
 
 
 @pytest.mark.asyncio
+async def test_find_user_request_stored_id_skips_user_search(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [{"id": 1, "status": 2, "media": {"title": "Severance", "status": 5}}]
+    }
+    mock_client.get.return_value = req_resp
+
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+
+    assert result.status == "ok"
+    assert mock_client.get.await_count == 1
+    assert (
+        mock_client.get.await_args_list[0].args[0] == "http://overseerr:5055/api/v1/user/7/requests"
+    )
+    mock_identity.record_overseerr_user_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_resolves_and_persists_missing_id(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    link = LinkedUser(
+        telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+    )
+    mock_identity.get_linked_user = AsyncMock(return_value=link)
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 42, "username": "alice"}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [{"id": 1, "status": 2, "media": {"title": "Severance", "status": 5}}]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+
+    assert result.status == "ok"
+    mock_identity.record_overseerr_user_id.assert_awaited_once_with(link, 42)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_succeeds_when_persist_races(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """A concurrent re-link can make record_overseerr_user_id report zero rows
+    written — the in-flight lookup still uses the freshly resolved id."""
+    mock_identity.record_overseerr_user_id = AsyncMock(return_value=False)
+
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 42, "username": "alice"}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [{"id": 1, "status": 2, "media": {"title": "Severance", "status": 5}}]
+    }
+
+    mock_client.get.side_effect = [user_resp, req_resp]
+
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+
+    assert result.status == "ok"
+    assert result.request is not None
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_empty_title_with_stored_id_issues_no_call(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "   ", telegram_user_id=1
+    )
+
+    assert result.status == "empty_input"
+    mock_client.get.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_stored_id_404_is_user_not_found(
+    mock_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """The memo's 'never fall back when a stored id 404s' guard: a deleted
+    account must not be re-resolved by username."""
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+    req_resp = MagicMock()
+    req_resp.status_code = 404
+    mock_client.get.return_value = req_resp
+
+    with caplog.at_level(logging.WARNING):
+        result = await find_user_request(
+            mock_client, mock_identity, settings, "severance", telegram_user_id=1
+        )
+
+    assert result.status == "user_not_found"
+    mock_identity.record_overseerr_user_id.assert_not_awaited()
+    assert mock_client.get.await_count == 1
+    assert any("unknown upstream" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
 async def test_find_user_request_no_match(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -410,8 +543,6 @@ async def test_find_user_request_no_match(
 async def test_find_user_request_multi_match(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -440,8 +571,6 @@ async def test_find_user_request_multi_match(
 async def test_find_user_request_multi_match_sends_photos_when_telegram_bot_given(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -487,8 +616,6 @@ async def test_find_user_request_multi_match_photo_captions_include_real_year(
     enrich_titles_with_names's per-item detail fetch, using releaseDate
     (movies) since there is no "releaseYear" field. Proves the caption
     actually gets a real year, not just that the field name exists."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -677,8 +804,6 @@ async def test_find_user_request_no_match_ignores_unrelated_titles(
     """The exact live bug: a query for a title the user never requested must
     not surface unrelated titles as candidates just because they share a
     common short word."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -705,8 +830,6 @@ async def test_find_user_request_no_match_ignores_unrelated_titles(
 async def test_find_user_request_http_error_on_requests_fetch(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -726,8 +849,6 @@ async def test_find_user_request_http_error_on_requests_fetch(
 async def test_find_user_request_non_dict_response(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -748,8 +869,6 @@ async def test_find_user_request_non_dict_response(
 async def test_find_user_request_non_list_results(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -770,8 +889,6 @@ async def test_find_user_request_non_list_results(
 async def test_find_user_request_skips_malformed_entries(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -800,8 +917,6 @@ async def test_find_user_request_skips_malformed_entries(
 async def test_find_user_request_year_stripped_from_query(
     mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -829,8 +944,6 @@ async def test_find_user_request_title_that_is_only_a_year(
     """Regression: "1917" is a real movie title, not just a year suffix to
     strip. Stripping it to "" made every candidate tie at the same fuzzy
     score, so the match was effectively random instead of picking "1917"."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
@@ -1092,8 +1205,6 @@ async def test_find_user_request_resolves_title_when_media_lacks_one(
     """The real bug: Overseerr's request list has no title, so without
     resolving it first, fuzzy-matching against user input can never match
     anything — every real request was silently unmatchable."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
     user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}

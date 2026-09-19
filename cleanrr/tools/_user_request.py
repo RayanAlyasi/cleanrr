@@ -11,7 +11,7 @@ import httpx
 from telegram.error import TelegramError
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools._results import text_result
 
 if TYPE_CHECKING:
@@ -293,6 +293,24 @@ async def _resolve_user_id(
             return None, "user_not_found"
 
 
+async def resolve_linked_user_id(
+    client: httpx.AsyncClient, identity: Identity, base_url: str, link: LinkedUser
+) -> tuple[int | None, ResolveUserStatus]:
+    if link.overseerr_user_id is not None:
+        return link.overseerr_user_id, "ok"
+
+    user_id, status = await _resolve_user_id(client, base_url, link.overseerr_username)
+    if user_id is None:
+        return None, status
+
+    # A concurrent re-link can change the row between the resolve above and
+    # this write — the id is still returned for this in-flight call (today's
+    # behaviour, today's race window) but nothing is persisted in that case.
+    if await identity.record_overseerr_user_id(link, user_id):
+        logger.info("recorded overseerr user id for telegram %s", link.telegram_user_id)
+    return user_id, "ok"
+
+
 async def find_user_request(
     overseerr_client: httpx.AsyncClient | None,
     identity: Identity,
@@ -316,8 +334,8 @@ async def find_user_request(
     ):
         return UserRequestLookup(status="not_configured")
 
-    overseerr_username = await identity.get_link(telegram_user_id)
-    if overseerr_username is None:
+    link = await identity.get_linked_user(telegram_user_id)
+    if link is None:
         return UserRequestLookup(status="unlinked_user")
 
     title_input = title.strip()
@@ -325,7 +343,9 @@ async def find_user_request(
         return UserRequestLookup(status="empty_input")
 
     base_url = str(settings.overseerr_url).rstrip("/")
-    user_id, resolve_status = await _resolve_user_id(overseerr_client, base_url, overseerr_username)
+    user_id, resolve_status = await resolve_linked_user_id(
+        overseerr_client, identity, base_url, link
+    )
     if user_id is None:
         return UserRequestLookup(status=resolve_status)
 
@@ -333,6 +353,13 @@ async def find_user_request(
         f"{base_url}/api/v1/user/{user_id}/requests",
         params={"take": _REQUEST_FETCH_LIMIT},
     )
+    if requests_resp.status_code == 404:
+        logger.warning(
+            "overseerr user id %s for telegram %s is unknown upstream; re-issue the link",
+            user_id,
+            telegram_user_id,
+        )
+        return UserRequestLookup(status="user_not_found")
     if requests_resp.status_code != 200:
         return UserRequestLookup(status="http_error")
 
