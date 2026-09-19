@@ -41,7 +41,7 @@ def settings() -> Settings:
 def _user_search_response(user_id: int = 42) -> MagicMock:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": user_id}]}
+    resp.json.return_value = {"results": [{"id": user_id, "username": "alice"}]}
     return resp
 
 

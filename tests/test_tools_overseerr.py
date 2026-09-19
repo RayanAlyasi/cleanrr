@@ -50,7 +50,7 @@ def settings() -> Settings:
 async def test_resolve_user_id_success(mock_client: AsyncMock) -> None:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": 42}]}
+    resp.json.return_value = {"results": [{"id": 42, "username": "alice"}]}
     mock_client.get.return_value = resp
 
     user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
@@ -217,7 +217,7 @@ async def test_list_my_requests_empty(
 
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -279,7 +279,7 @@ async def test_list_my_requests_requests_http_500(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 500
     mock_client.get.side_effect = [user_response, requests_response]
@@ -299,7 +299,7 @@ async def test_list_my_requests_requests_parse_error(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.side_effect = ValueError("malformed")
@@ -319,7 +319,7 @@ async def test_list_my_requests_non_dict_response(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = ["not", "a", "dict"]
@@ -339,7 +339,7 @@ async def test_list_my_requests_non_list_results(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {"results": "not-a-list"}
@@ -361,7 +361,7 @@ async def test_list_my_requests_notes_truncation_when_total_exceeds_page(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {
@@ -386,7 +386,7 @@ async def test_list_my_requests_formats_declined_and_partial(
     mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {
@@ -428,7 +428,7 @@ async def test_list_my_requests_formatted_output(
 
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -481,7 +481,7 @@ async def test_list_my_requests_resolves_titles_from_real_overseerr_shape(
 
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -633,7 +633,7 @@ async def test_find_request_no_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -659,7 +659,7 @@ async def test_find_request_exact_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -693,7 +693,7 @@ async def test_find_request_exact_match_without_release_year(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -720,7 +720,7 @@ async def test_find_request_fuzzy_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -748,7 +748,7 @@ async def test_find_request_year_stripped(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -781,7 +781,7 @@ async def test_find_request_multi_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -808,7 +808,7 @@ async def test_find_request_http_error(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 500
@@ -832,7 +832,7 @@ async def test_find_request_requests_parse_error(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -886,7 +886,7 @@ async def test_find_request_increments_metric_on_every_exit(
     if mock_setup == "no_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Something Else Entirely")
@@ -894,7 +894,7 @@ async def test_find_request_increments_metric_on_every_exit(
     elif mock_setup == "multi_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Dune Part One", "Dune Part Two")
@@ -902,7 +902,7 @@ async def test_find_request_increments_metric_on_every_exit(
     elif mock_setup == "single_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Dune Part One")

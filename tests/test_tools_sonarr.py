@@ -72,7 +72,7 @@ async def test_get_show_status_not_a_show(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -102,7 +102,7 @@ async def test_get_show_status_not_in_sonarr(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -139,7 +139,7 @@ async def test_get_show_status_all_downloaded(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -190,7 +190,7 @@ async def test_get_show_status_partial_with_queue(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -242,7 +242,7 @@ async def test_get_show_status_nothing_yet(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -289,7 +289,7 @@ async def test_get_show_status_partial_no_queue(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -336,7 +336,7 @@ async def test_get_show_status_queue_fetch_fails_still_returns_series(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -386,7 +386,7 @@ async def test_get_show_status_queue_malformed_json_still_returns_series(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -437,7 +437,7 @@ async def test_get_show_status_queue_fetch_raises_still_returns_series(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -599,7 +599,7 @@ async def test_get_show_status_no_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -631,7 +631,7 @@ async def test_get_show_status_multi_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -675,7 +675,7 @@ async def test_get_show_status_series_http_error(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -712,7 +712,7 @@ async def test_get_show_status_series_parse_error(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -750,7 +750,7 @@ async def test_get_show_status_series_not_dict(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -788,7 +788,7 @@ async def test_get_show_status_series_missing_id(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -826,7 +826,7 @@ async def test_get_show_status_sonarr_http_exception(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200

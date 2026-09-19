@@ -57,7 +57,7 @@ def settings() -> Settings:
 async def test_resolve_user_id_success(mock_client: AsyncMock) -> None:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": 42}]}
+    resp.json.return_value = {"results": [{"id": 42, "username": "alice"}]}
     mock_client.get.return_value = resp
 
     user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
@@ -136,7 +136,9 @@ async def test_resolve_user_id_non_list_results(mock_client: AsyncMock) -> None:
 
 
 @pytest.mark.asyncio
-async def test_resolve_user_id_non_dict_result_entry(mock_client: AsyncMock) -> None:
+async def test_resolve_user_id_non_dict_result_entry_is_not_found(mock_client: AsyncMock) -> None:
+    """A non-dict entry can no longer be reached by a positional fallback —
+    it just never matches, and no `pageInfo` means no second page."""
     resp = MagicMock()
     resp.status_code = 200
     resp.json.return_value = {"results": ["not-a-dict"]}
@@ -144,7 +146,7 @@ async def test_resolve_user_id_non_dict_result_entry(mock_client: AsyncMock) -> 
 
     user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
     assert user_id is None
-    assert label == "parse_error"
+    assert label == "user_not_found"
 
 
 @pytest.mark.asyncio
@@ -215,6 +217,109 @@ async def test_resolve_user_id_ambiguous_no_match_among_multiple_is_not_found(
     assert label == "user_not_found"
 
 
+@pytest.mark.asyncio
+async def test_resolve_user_id_single_non_matching_candidate_is_not_found(
+    mock_client: AsyncMock,
+) -> None:
+    """Regression for the memo's risk 1: a single non-matching candidate must
+    not be treated as a positional match — Jellyseerr's `q` is a substring
+    match over username and email, so `q=ann` can return only "joanna"."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"id": 9, "username": "joanna"}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "ann")
+    assert user_id is None
+    assert label == "user_not_found"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_finds_exact_match_on_second_page(mock_client: AsyncMock) -> None:
+    page_one = MagicMock()
+    page_one.status_code = 200
+    page_one.json.return_value = {
+        "results": [{"id": i, "username": f"user{i}"} for i in range(100)],
+        "pageInfo": {"results": 150},
+    }
+    page_two = MagicMock()
+    page_two.status_code = 200
+    page_two.json.return_value = {
+        "results": [{"id": 11, "username": "alice"}],
+        "pageInfo": {"results": 150},
+    }
+    mock_client.get.side_effect = [page_one, page_two]
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 11
+    assert label == "ok"
+    assert mock_client.get.await_count == 2
+    assert mock_client.get.await_args_list[1].kwargs["params"]["skip"] == 100
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_short_page_advances_skip_by_rows_returned(
+    mock_client: AsyncMock,
+) -> None:
+    """Regression: `skip` must advance by the rows a page actually returned,
+    not by the constant page size — otherwise a short page skips users."""
+    page_one = MagicMock()
+    page_one.status_code = 200
+    page_one.json.return_value = {
+        "results": [{"id": i, "username": f"user{i}"} for i in range(3)],
+        "pageInfo": {"results": 4},
+    }
+    page_two = MagicMock()
+    page_two.status_code = 200
+    page_two.json.return_value = {"results": [{"id": 11, "username": "alice"}]}
+    mock_client.get.side_effect = [page_one, page_two]
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 11
+    assert label == "ok"
+    assert mock_client.get.await_args_list[1].kwargs["params"]["skip"] == 3
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_sweep_stops_at_max_pages(mock_client: AsyncMock) -> None:
+    page = MagicMock()
+    page.status_code = 200
+    page.json.return_value = {
+        "results": [{"id": i, "username": f"user{i}"} for i in range(100)],
+        "pageInfo": {"results": 10000},
+    }
+    mock_client.get.return_value = page
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "user_not_found"
+    assert mock_client.get.await_count == 5
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_no_page_info_issues_only_one_request(
+    mock_client: AsyncMock,
+) -> None:
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": [{"id": 1, "username": "zx307"}]}
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "user_not_found"
+    assert mock_client.get.await_count == 1
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_connect_error_returns_http_error(mock_client: AsyncMock) -> None:
+    mock_client.get.side_effect = httpx.ConnectError("boom")
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id is None
+    assert label == "http_error"
+
+
 # ---------------------------------------------------------------------------
 # find_user_request
 # ---------------------------------------------------------------------------
@@ -259,7 +364,7 @@ async def test_find_user_request_exact_match_returns_request(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -285,7 +390,7 @@ async def test_find_user_request_no_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -309,7 +414,7 @@ async def test_find_user_request_multi_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -339,7 +444,7 @@ async def test_find_user_request_multi_match_sends_photos_when_telegram_bot_give
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -386,7 +491,7 @@ async def test_find_user_request_multi_match_photo_captions_include_real_year(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -576,7 +681,7 @@ async def test_find_user_request_no_match_ignores_unrelated_titles(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -604,7 +709,7 @@ async def test_find_user_request_http_error_on_requests_fetch(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 503
@@ -625,7 +730,7 @@ async def test_find_user_request_non_dict_response(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -647,7 +752,7 @@ async def test_find_user_request_non_list_results(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -669,7 +774,7 @@ async def test_find_user_request_skips_malformed_entries(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -699,7 +804,7 @@ async def test_find_user_request_year_stripped_from_query(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -728,7 +833,7 @@ async def test_find_user_request_title_that_is_only_a_year(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -991,7 +1096,7 @@ async def test_find_user_request_resolves_title_when_media_lacks_one(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200

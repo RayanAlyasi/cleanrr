@@ -218,42 +218,13 @@ def _fuzzy_match_titles(query: str, candidates: list[str]) -> list[str]:
     return [c for c, _ in scored[:_FUZZY_MATCH_LIMIT]]
 
 
-_USER_SEARCH_PAGE_SIZE = 50
+_USER_SEARCH_PAGE_SIZE = 100
+_USER_SEARCH_MAX_PAGES = 5
 
 
 async def _resolve_user_id(
     client: httpx.AsyncClient, base_url: str, username: str
 ) -> tuple[int | None, ResolveUserStatus]:
-    user_search = await client.get(
-        f"{base_url}/api/v1/user",
-        params={"q": username, "take": _USER_SEARCH_PAGE_SIZE},
-    )
-    if user_search.status_code == 404:
-        return None, "user_not_found"
-    if user_search.status_code != 200:
-        return None, "http_error"
-
-    try:
-        user_data = user_search.json()
-    except ValueError:
-        return None, "parse_error"
-    if not isinstance(user_data, dict):
-        return None, "parse_error"
-    users = user_data.get("results", [])
-    if not isinstance(users, list):
-        return None, "parse_error"
-
-    if not users:
-        return None, "user_not_found"
-
-    # The `q` filter is a Jellyseerr extension, not guaranteed on vanilla
-    # Overseerr's /user endpoint — a non-filtering backend would return an
-    # unrelated page of users with `q` silently ignored. Prefer an exact
-    # (case-insensitive) username match over every field Overseerr/Jellyseerr
-    # may key a login by; only fall back to position 0 when there's a single
-    # candidate to begin with (the ambiguous, dangerous case is specifically
-    # *multiple* non-matching candidates — picking blindly there risks
-    # resolving to the wrong account).
     target = username.casefold()
 
     def _matches(user: object) -> bool:
@@ -266,18 +237,60 @@ async def _resolve_user_id(
         )
         return any(isinstance(c, str) and c.casefold() == target for c in candidates)
 
-    matched = next((u for u in users if _matches(u)), None)
-    if matched is None:
-        if len(users) != 1:
-            return None, "user_not_found"
-        if not isinstance(users[0], dict):
-            return None, "parse_error"
-        matched = users[0]
+    seen = 0
+    pages_fetched = 0
+    while True:
+        # Keep sending `q`: vanilla Overseerr ignores unknown query params,
+        # Jellyseerr narrows the sweep with it. `skip` advances by the rows
+        # actually returned, not by the requested page size — neither fork
+        # caps `take` today, but this stays correct even if one starts to.
+        try:
+            user_search = await client.get(
+                f"{base_url}/api/v1/user",
+                params={"q": username, "take": _USER_SEARCH_PAGE_SIZE, "skip": seen},
+            )
+        except httpx.HTTPError:
+            return None, "http_error"
+        pages_fetched += 1
 
-    try:
-        return matched["id"], "ok"
-    except (KeyError, TypeError):
-        return None, "parse_error"
+        if user_search.status_code == 404:
+            return None, "user_not_found"
+        if user_search.status_code != 200:
+            return None, "http_error"
+
+        try:
+            user_data = user_search.json()
+        except ValueError:
+            return None, "parse_error"
+        if not isinstance(user_data, dict):
+            return None, "parse_error"
+        users = user_data.get("results", [])
+        if not isinstance(users, list):
+            return None, "parse_error"
+
+        # The result is persisted, so only an exact (case-insensitive) match
+        # on username/plexUsername/jellyfinUsername resolves — a substring
+        # `q` hit (Jellyseerr's `q` also matches email) or an unfiltered
+        # vanilla page must never bind the wrong account.
+        matched = next((u for u in users if _matches(u)), None)
+        if matched is not None:
+            user_id = matched.get("id") if isinstance(matched, dict) else None
+            if isinstance(user_id, int):
+                return user_id, "ok"
+            return None, "parse_error"
+
+        page_info = user_data.get("pageInfo")
+        total = (
+            page_info.get("results")
+            if isinstance(page_info, dict) and isinstance(page_info.get("results"), int)
+            else None
+        )
+        seen += len(users)
+
+        if not (
+            users and total is not None and seen < total and pages_fetched < _USER_SEARCH_MAX_PAGES
+        ):
+            return None, "user_not_found"
 
 
 async def find_user_request(

@@ -49,7 +49,7 @@ def _make_overseerr_ok(
 ) -> tuple[MagicMock, MagicMock]:
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -203,7 +203,7 @@ async def test_get_movie_status_no_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -233,7 +233,7 @@ async def test_get_movie_status_multi_match(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -278,7 +278,7 @@ async def test_get_movie_status_not_a_movie(
 
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -314,7 +314,7 @@ async def test_get_movie_status_tmdb_id_wrong_type(
     mock_identity.get_link = AsyncMock(return_value="alice")
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 7}]}
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
     req_resp = MagicMock()
     req_resp.status_code = 200
     req_resp.json.return_value = {
