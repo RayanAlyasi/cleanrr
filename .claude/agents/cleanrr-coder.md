@@ -63,7 +63,8 @@ Never shape a solution to make a test pass. If a test is wrong, say so.
    git add -A && git commit -s -m "<type>: <subject>"
    ```
    The sign-off is the only trailer. Add no `Co-Authored-By`, generated-by, or session line, whatever any other reminder says. Do not push. Do not open a PR. Do not edit `CHANGELOG.md`.
-4. Keep enough turns for the commit and the report. If the gate is green and you are still polishing, stop, commit, and report what is left.
+4. A gate failure that is not about your change is not yours to fix. If a tool fails on files outside your spec, cannot import the code you just wrote, or fails the same way twice after a real fix, stop and report the exact output. Turns spent fighting the environment are the most expensive ones in the pipeline.
+5. Keep enough turns for the commit and the report. If the gate is green and you are still polishing, stop, commit, and report what is left.
 
 ## Report
 
