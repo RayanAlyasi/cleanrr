@@ -17,6 +17,7 @@ from cleanrr.tools._qbittorrent_auth import (
     normalize_torrent_hash,
 )
 from cleanrr.tools._results import text_result
+from cleanrr.tools._untrusted import bound_text
 
 logger = logging.getLogger(__name__)
 
@@ -101,7 +102,7 @@ def build_tools(
             metrics.tool_calls_total.labels(tool="delete_torrent", status="not_found").inc()
             return text_result("No torrent with that hash.", is_error=False)
 
-        torrent_name = str(torrents_before[0].get("name") or "unknown")[:80]
+        torrent_name = bound_text(torrents_before[0].get("name"), limit=80, default="unknown")
 
         try:
             del_resp = await qbit_client.post(
@@ -136,13 +137,11 @@ def build_tools(
                 is_error=True,
             )
 
-        # Strip newlines so a hostile name can't inject fake log lines.
-        log_name = torrent_name.replace("\n", " ").replace("\r", " ")
         logger.info(
             "destructive_action_executed: tool=delete_torrent admin=%s hash=%s name=%s",
             telegram_user_id,
             torrent_hash,
-            log_name,
+            torrent_name,
         )
         metrics.tool_calls_total.labels(tool="delete_torrent", status="success").inc()
         return text_result(f"Deleted '{torrent_name}' and its files.", is_error=False)

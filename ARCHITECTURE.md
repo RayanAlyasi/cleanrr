@@ -30,8 +30,8 @@ Single Python process, single container. Tools are defined as in-process `@tool`
 | Telegram Bot API | Inbound | Bot token | The only interface exposed to end users. |
 | Anthropic API (or Claude subscription auth) | Outbound | OAuth token or API key | Reasoning only — never sees homelab credentials. |
 | Overseerr REST API | Outbound | API key | Request lookup, cancellation. |
-| Sonarr / Radarr REST API | Outbound | API key | Status lookup, re-search trigger. |
-| qBittorrent WebUI API | Outbound | Username/password | Stalled-torrent diagnostics, deletion. |
+| Sonarr / Radarr REST API | Outbound | API key | Status and queue-diagnosis lookup, re-search trigger. |
+| qBittorrent WebUI API | Outbound | Username/password | Stalled-torrent diagnostics, per-torrent tracker lookup, deletion. |
 | Prometheus `/metrics` | Inbound, optional | None (bind to `127.0.0.1` by default) | Opt-in via `METRICS_ENABLED`; see [README's Metrics section](README.md#metrics-optional). |
 
 ## Project layout

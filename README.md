@@ -29,9 +29,9 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Maintains a per-user conversation session so follow-up questions retain context.
 - Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts. The friend's numeric Overseerr user id is captured when the code is issued; links made before that are matched to their id on the next start, and once the id is stored, a Plex or Jellyfin rename no longer breaks the link.
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
-- TV show status via Sonarr — see what's downloaded and what's downloading.
-- Movie status via Radarr — see what's downloaded and what's downloading.
-- Stalled-torrent diagnostics via qBittorrent — admin-only "what's stuck?" check.
+- TV show status via Sonarr — episode progress and why it's stuck, quoting Sonarr's own queue message.
+- Movie status via Radarr — download progress and why it's stuck, quoting Radarr's own queue message.
+- Stalled-torrent diagnostics via qBittorrent — admin-only "what's stuck?" check, with the reason and the torrent hash.
 - Cancel one of your own Overseerr requests via a chat-confirmation flow (Confirm / Cancel buttons).
 - Re-trigger a Radarr / Sonarr search on one of your own stuck requests (owner-scoped, confirmation-gated).
 - Admin: delete a stalled torrent and its files from qBittorrent (admin-only, confirmation-gated).

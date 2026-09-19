@@ -56,7 +56,7 @@ if resp.status_code != 200:
 Telegram text, Claude's tool arguments, and every upstream response are untrusted:
 
 - Shape-check JSON before use (`isinstance(data, dict)`, `isinstance(tmdb_id, int)`); default-deny on surprises.
-- Bound upstream strings before they reach a Telegram reply (`[:80]`) and strip newlines before they reach a log line.
+- Bound upstream strings with `cleanrr/tools/_untrusted.bound_text` before they reach a Telegram reply or a log line. New code uses it; the hand-rolled `[:80]` slices in `_user_request.py`, `overseerr_write.py`, `radarr_write.py`, `sonarr_write.py`, `permissions/_formatters.py`, and `handlers.py` are bounded but not sanitised and not yet migrated — `permissions/_formatters.py` migrates first since its text reaches the Telegram confirmation prompt. `overseerr.py` interpolates `title` with no bound at all.
 - Validate tool arguments in the tool (`normalize_torrent_hash`, `request_id > 0`); the schema is a hint to the model, not a guarantee.
 - Never pass user text into a shell, a file path, a SQL string, or an HTTP body unbounded.
 - Every token-shaped setting is `SecretStr`; `.get_secret_value()` never appears in an f-string.
@@ -89,5 +89,5 @@ Conventional Commits, subject at most 50 characters, imperative, no trailing per
 - Does every new `Settings` field have `.env.example` and README rows?
 - Does a new tool appear in `DEFAULT_SYSTEM_PROMPT`, and if destructive, in `WRITE_TOOLS`?
 - Does the tool's output carry the ids the next tool needs, and does a test assert them?
-- Is every upstream string bounded before it reaches Telegram or a log?
+- Is every upstream string bounded with `cleanrr/tools/_untrusted.bound_text` before it reaches Telegram or a log?
 - Did `ARCHITECTURE.md` or `THREAT_MODEL.md` need a line, and did it get one?

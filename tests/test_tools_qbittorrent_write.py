@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from unittest.mock import AsyncMock, MagicMock
 
 import httpx
@@ -286,3 +287,33 @@ async def test_session_expired_during_torrent_fetch(
 
     assert result["is_error"] is True
     assert "session" in result["content"][0]["text"].lower()
+
+
+@pytest.mark.asyncio
+async def test_hostile_name_bounded_in_log_and_reply(
+    mock_client: AsyncMock, settings: Settings, caplog: pytest.LogCaptureFixture
+) -> None:
+    hostile_name = "Bad\nName\rWith\x1bEscape\u2028Line"
+    mock_client.post.side_effect = [_login_ok(), MagicMock(status_code=200)]
+    mock_client.get.side_effect = [_torrent_info(name=hostile_name), _empty_torrents()]
+
+    tools = build_tools(mock_client, settings, telegram_user_id=123)
+    tool_fn = tools[0]
+
+    with caplog.at_level(logging.INFO):
+        result = await tool_fn.handler({"torrent_hash": _VALID_HASH})
+
+    assert result["is_error"] is False
+    reply_text = result["content"][0]["text"]
+    for control_char in "\n\r\x1b\u2028":
+        assert control_char not in reply_text
+    assert "Bad Name With Escape Line" in reply_text
+
+    log_line = next(
+        record.getMessage()
+        for record in caplog.records
+        if "destructive_action_executed" in record.getMessage()
+    )
+    for control_char in "\n\r\x1b\u2028":
+        assert control_char not in log_line
+    assert "Bad Name With Escape Line" in log_line

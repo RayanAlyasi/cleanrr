@@ -9,7 +9,9 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.tools._queue_reason import diagnose_queue, render_queue_reason
 from cleanrr.tools._results import text_result
+from cleanrr.tools._untrusted import bound_text
 from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
 if TYPE_CHECKING:
@@ -137,9 +139,10 @@ def build_tools(
                 )
 
             # API-supplied title is untrusted; bound length before interpolation.
-            title = str(title)[:80]
+            title = bound_text(title, limit=80, default="Unknown")
 
-            queued = 0
+            queue_records: object = []
+            queue_read_ok = False
             try:
                 queue_resp = await radarr_client.get(
                     f"{base_url}/api/v3/queue",
@@ -152,20 +155,41 @@ def build_tools(
                     try:
                         queue_data = queue_resp.json()
                         if isinstance(queue_data, dict):
-                            queued = len(queue_data.get("records", []))
+                            records = queue_data.get("records")
+                            if isinstance(records, list):
+                                queue_records, queue_read_ok = records, True
                     except ValueError:
                         pass
             except httpx.HTTPError:
                 logger.exception("Radarr queue fetch failed")
 
+            diagnosis = diagnose_queue(queue_records)
+
             title_year = f"{title} ({year})" if year else title
 
             if has_file:
                 result_text = f"{title_year} is downloaded."
-            elif queued > 0:
-                result_text = f"{title_year}: downloading."
+            elif diagnosis.records > 0:
+                result_text = (
+                    f"{title_year}: downloading."
+                    if diagnosis.code == "ok"
+                    else f"{title_year}: in Radarr's queue."
+                )
+            elif not queue_read_ok:
+                result_text = (
+                    f"{title_year}: Radarr's queue didn't answer, so I can't tell if "
+                    "it's downloading."
+                )
             else:
                 result_text = f"{title_year}: nothing yet — Radarr is searching."
+
+            reason = render_queue_reason(
+                diagnosis,
+                service="Radarr",
+                include_download_id=telegram_user_id in settings.admin_telegram_ids,
+            )
+            if reason and not has_file:
+                result_text += f"\n{reason}"
 
             metrics.tool_calls_total.labels(tool="get_movie_status", status="success").inc()
             return text_result(result_text, is_error=False)

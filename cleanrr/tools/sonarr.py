@@ -9,13 +9,24 @@ from claude_agent_sdk import SdkMcpTool, tool
 import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
+from cleanrr.tools._queue_reason import diagnose_queue, render_queue_reason
 from cleanrr.tools._results import text_result
+from cleanrr.tools._untrusted import bound_text
 from cleanrr.tools._user_request import find_user_request, render_lookup_error
 
 if TYPE_CHECKING:
     import telegram
 
 logger = logging.getLogger(__name__)
+
+
+def _episode_count(stats: object, key: str) -> int:
+    # A non-dict `statistics` used to raise AttributeError out of the handler,
+    # and a non-int count used to be interpolated into the reply unbounded.
+    if not isinstance(stats, dict):
+        return 0
+    value = stats.get(key)
+    return value if isinstance(value, int) and not isinstance(value, bool) else 0
 
 
 def build_tools(
@@ -126,14 +137,14 @@ def build_tools(
                     is_error=True,
                 )
             # API-supplied title is untrusted; bound length before interpolation.
-            title = str(title)[:80]
-            stats = series.get("statistics", {})
+            title = bound_text(title, limit=80, default="Unknown")
 
-            total = stats.get("episodeCount", 0)
-            have = stats.get("episodeFileCount", 0)
+            total = _episode_count(series.get("statistics"), "episodeCount")
+            have = _episode_count(series.get("statistics"), "episodeFileCount")
 
             # Don't fail the tool if this errors — episode counts alone are still useful.
-            queue_records = []
+            queue_records: object = []
+            queue_read_ok = False
             try:
                 queue_resp = await sonarr_client.get(
                     f"{base_url}/api/v3/queue",
@@ -146,23 +157,42 @@ def build_tools(
                     try:
                         queue_data = queue_resp.json()
                         if isinstance(queue_data, dict):
-                            queue_records = queue_data.get("records", [])
+                            records = queue_data.get("records")
+                            if isinstance(records, list):
+                                queue_records, queue_read_ok = records, True
                     except ValueError:
                         pass
             except httpx.HTTPError:
                 logger.exception("Sonarr queue fetch failed")
 
-            queued = len(queue_records)
+            diagnosis = diagnose_queue(queue_records)
+            queued = diagnosis.records
 
             # Format output
-            if have == total and total > 0:
+            all_downloaded = have == total and total > 0
+            if all_downloaded:
                 result_text = f"All {total} episodes of {title} are downloaded."
             elif queued > 0:
-                result_text = f"{title}: {have} of {total} episodes ready, {queued} downloading."
+                queue_word = "downloading" if diagnosis.code == "ok" else "in the queue"
+                result_text = f"{title}: {have} of {total} episodes ready, {queued} {queue_word}."
+            elif not queue_read_ok:
+                result_text = (
+                    f"{title}: {have} of {total} episodes ready; Sonarr's queue didn't "
+                    "answer, so I can't tell what's downloading."
+                )
             elif have == 0 and queued == 0:
                 result_text = f"{title}: nothing downloaded yet — Sonarr is searching."
             else:
                 result_text = f"{title}: {have} of {total} episodes ready."
+
+            if not all_downloaded:
+                reason = render_queue_reason(
+                    diagnosis,
+                    service="Sonarr",
+                    include_download_id=telegram_user_id in settings.admin_telegram_ids,
+                )
+                if reason:
+                    result_text += f"\n{reason}"
 
             metrics.tool_calls_total.labels(tool="get_show_status", status="success").inc()
             return text_result(result_text, is_error=False)
