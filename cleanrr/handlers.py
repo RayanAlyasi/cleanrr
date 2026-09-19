@@ -57,7 +57,7 @@ async def _is_authorized(telegram_user_id: int, identity: Identity, settings: Se
     # empty link table can never lock the admin out.
     if telegram_user_id in settings.admin_telegram_ids:
         return True
-    return await identity.get_link(telegram_user_id) is not None
+    return await identity.get_linked_user(telegram_user_id) is not None
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -167,9 +167,7 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
 
     overseerr_username = args[0].lstrip("@")
     base_url = str(settings.overseerr_url).rstrip("/")
-    _user_id, resolve_status = await _resolve_user_id(
-        overseerr_client, base_url, overseerr_username
-    )
+    user_id, resolve_status = await _resolve_user_id(overseerr_client, base_url, overseerr_username)
     if resolve_status == "user_not_found":
         await update.message.reply_text(
             f"Couldn't find an Overseerr user named '{overseerr_username}' — "
@@ -184,9 +182,12 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if resolve_status == "parse_error":
         await update.message.reply_text("Unexpected response from Overseerr — try again later.")
         return
+    if user_id is None:
+        await update.message.reply_text("Unexpected response from Overseerr — try again later.")
+        return
 
     identity: Identity = context.application.bot_data[IDENTITY_KEY]
-    code = await identity.issue_code(overseerr_username)
+    code = await identity.issue_code(overseerr_username, overseerr_user_id=user_id)
     await update.message.reply_text(
         f"Link code for @{overseerr_username}: {code}\n"
         f"Expires in {settings.link_code_ttl_hours}h. Share it; they DM me /link {code}."

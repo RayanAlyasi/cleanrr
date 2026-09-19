@@ -21,6 +21,7 @@ from cleanrr.handlers import (
     on_error,
     on_message,
 )
+from cleanrr.identity import LinkedUser
 from cleanrr.permissions import ConfirmationRegistry
 
 
@@ -82,12 +83,16 @@ def _make_context(
     # unconditionally, sometimes to None) — set them unconditionally here too
     # so cmd_invite/on_confirmation/on_message never hit a KeyError from an
     # incomplete test double. IDENTITY_KEY defaults to a linked, non-admin
-    # double (get_link resolves) so on_message's authorization gate doesn't
-    # need every test to care about linking; callers that pass their own
-    # identity (cmd_invite/cmd_link tests) still win.
+    # double (get_linked_user resolves) so on_message's authorization gate
+    # doesn't need every test to care about linking; callers that pass their
+    # own identity (cmd_invite/cmd_link tests) still win.
     if identity is None:
         identity = MagicMock()
-        identity.get_link = AsyncMock(return_value="alice")
+        identity.get_linked_user = AsyncMock(
+            return_value=LinkedUser(
+                telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+            )
+        )
     bot_data: dict[str, object] = {
         SETTINGS_KEY: settings,
         IDENTITY_KEY: identity,
@@ -204,7 +209,7 @@ async def test_on_message_replies_at_capacity_when_pool_full() -> None:
 async def test_on_message_refuses_unlinked_non_admin() -> None:
     settings = _make_settings(admin_ids=set())
     identity = MagicMock()
-    identity.get_link = AsyncMock(return_value=None)
+    identity.get_linked_user = AsyncMock(return_value=None)
     agent = MagicMock()
     agent.respond = AsyncMock()
     pool = _make_pool(agent)
@@ -228,7 +233,7 @@ async def test_on_message_admin_bypasses_link_check() -> None:
     any lookup so a broken link table can't lock the admin out."""
     settings = _make_settings(admin_ids={1})
     identity = MagicMock()
-    identity.get_link = AsyncMock(return_value=None)
+    identity.get_linked_user = AsyncMock(return_value=None)
     agent = MagicMock()
     agent.respond = AsyncMock(return_value="hi")
     update = _make_update("hello", user_id=1)
@@ -237,14 +242,18 @@ async def test_on_message_admin_bypasses_link_check() -> None:
     await on_message(update, context)
 
     agent.respond.assert_awaited_once()
-    identity.get_link.assert_not_awaited()
+    identity.get_linked_user.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_on_message_linked_non_admin_reaches_claude() -> None:
     settings = _make_settings(admin_ids=set())
     identity = MagicMock()
-    identity.get_link = AsyncMock(return_value="alice")
+    identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
     agent = MagicMock()
     agent.respond = AsyncMock(return_value="hi")
     update = _make_update("hello", user_id=1)
@@ -259,7 +268,7 @@ async def test_on_message_linked_non_admin_reaches_claude() -> None:
 async def test_on_message_unauthorized_checked_before_length() -> None:
     settings = _make_settings(max_chars=10, admin_ids=set())
     identity = MagicMock()
-    identity.get_link = AsyncMock(return_value=None)
+    identity.get_linked_user = AsyncMock(return_value=None)
     agent = MagicMock()
     agent.respond = AsyncMock()
     update = _make_update("x" * 11)
@@ -490,6 +499,26 @@ async def test_cmd_invite_reports_overseerr_parse_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cmd_invite_reports_missing_user_id_on_ok_status() -> None:
+    """Unreachable in practice — _resolve_user_id doesn't return (None, "ok")
+    today — but this is what narrows the type for pyright and stops the
+    handler from ever issuing a code it could not bind."""
+    settings = _make_settings(admin_ids={1}, overseerr_configured=True)
+    identity = MagicMock()
+    identity.issue_code = AsyncMock(return_value="ABC123")
+    update = _make_update("", user_id=1)
+    context = _make_context(settings, identity=identity, overseerr_client=MagicMock())
+    context.args = ["alice"]
+
+    with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(None, "ok"))):
+        await cmd_invite(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "Unexpected response" in reply
+    identity.issue_code.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_cmd_invite_strips_leading_at_sign() -> None:
     settings = _make_settings(admin_ids={1}, overseerr_configured=True)
     identity = MagicMock()
@@ -501,7 +530,7 @@ async def test_cmd_invite_strips_leading_at_sign() -> None:
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
         await cmd_invite(update, context)
 
-    identity.issue_code.assert_awaited_once_with("bob")
+    identity.issue_code.assert_awaited_once_with("bob", overseerr_user_id=7)
 
 
 @pytest.mark.asyncio
@@ -516,7 +545,7 @@ async def test_cmd_invite_happy_path() -> None:
     with patch("cleanrr.handlers._resolve_user_id", AsyncMock(return_value=(7, "ok"))):
         await cmd_invite(update, context)
 
-    identity.issue_code.assert_awaited_once_with("alice")
+    identity.issue_code.assert_awaited_once_with("alice", overseerr_user_id=7)
     reply = update.message.reply_text.await_args.args[0]
     assert "ABC123" in reply
     assert str(settings.link_code_ttl_hours) in reply
@@ -582,7 +611,7 @@ async def test_cmd_link_invalid_code() -> None:
 @pytest.mark.asyncio
 async def test_cmd_link_happy_path() -> None:
     """A user with no existing link must still be able to redeem a code —
-    /link never consults get_link, only redeem_code."""
+    /link never consults get_linked_user, only redeem_code."""
     identity = MagicMock()
     identity.redeem_code = AsyncMock(return_value="alice")
     update = _make_update("", user_id=1)
@@ -593,7 +622,7 @@ async def test_cmd_link_happy_path() -> None:
 
     reply = update.message.reply_text.await_args.args[0]
     assert "Linked you to Overseerr user @alice" in reply
-    identity.get_link.assert_not_called()
+    identity.get_linked_user.assert_not_called()
 
 
 # ---------------------------------------------------------------------------
