@@ -8,6 +8,7 @@ from telegram.error import TelegramError
 from telegram.ext import ContextTypes
 
 import cleanrr.metrics as metrics
+from cleanrr.agent import Agent, AgentRetired
 from cleanrr.agent_pool import AgentPool
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
@@ -25,6 +26,9 @@ OVERSEERR_CLIENT_KEY = "overseerr_client"
 # Telegram's sendMessage hard cap (core.telegram.org/bots/api#sendmessage):
 # 1-4096 UTF-16 code units. PTB doesn't split or truncate for you.
 _TELEGRAM_MAX_REPLY_CHARS = 4096
+
+_NOT_LINKED_REPLY = "You're not linked yet. Ask the admin for a link code, then send /link <code>."
+_AT_CAPACITY_REPLY = "cleanrr's at capacity right now — try again in a bit."
 
 
 async def cmd_start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -47,6 +51,7 @@ async def cmd_help(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         "/start — sanity check\n"
         "/help — this message\n"
         "/link <code> — bind your Telegram account to an Overseerr user\n"
+        "/reset — forget our conversation and start fresh\n"
         "/invite <overseerr_username> — admin only; issue a link code\n\n"
         "Once you're linked, send any message and I'll reply via Claude."
     )
@@ -58,6 +63,22 @@ async def _is_authorized(telegram_user_id: int, identity: Identity, settings: Se
     if telegram_user_id in settings.admin_telegram_ids:
         return True
     return await identity.get_linked_user(telegram_user_id) is not None
+
+
+async def _respond_with_one_retry(
+    pool: AgentPool, agent: Agent, telegram_user_id: int, prompt: str
+) -> str | None:
+    try:
+        return await agent.respond(prompt=prompt)
+    except AgentRetired:
+        logger.warning(
+            "user %s's agent was retired mid-message — retrying on a fresh one",
+            telegram_user_id,
+        )
+        fresh = await pool.get_or_create(telegram_user_id)
+        if fresh is None:
+            return None
+        return await fresh.respond(prompt=prompt)
 
 
 async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -81,9 +102,7 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if not await _is_authorized(user.id, identity, settings):
         metrics.claude_requests_total.labels(status="unauthorized").inc()
         logger.warning("refused unlinked user %s (@%s)", user.id, safe_username)
-        await update.message.reply_text(
-            "You're not linked yet. Ask the admin for a link code, then send /link <code>."
-        )
+        await update.message.reply_text(_NOT_LINKED_REPLY)
         return
 
     if len(text) > settings.telegram_max_message_chars:
@@ -99,12 +118,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     agent = await pool.get_or_create(user.id)
     if agent is None:
         metrics.claude_requests_total.labels(status="at_capacity").inc()
-        await update.message.reply_text("cleanrr's at capacity right now — try again in a bit.")
+        await update.message.reply_text(_AT_CAPACITY_REPLY)
         return
 
     start = time.perf_counter()
     try:
-        reply = await agent.respond(prompt=text)
+        reply = await _respond_with_one_retry(pool, agent, user.id, text)
     except TimeoutError:
         logger.warning("agent.respond timed out after %.0fs", settings.claude_timeout_seconds)
         metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
@@ -120,6 +139,11 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
         )
         return
     metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
+
+    if reply is None:
+        metrics.claude_requests_total.labels(status="at_capacity").inc()
+        await update.message.reply_text(_AT_CAPACITY_REPLY)
+        return
 
     text = reply or "(no reply)"
     if len(text) > _TELEGRAM_MAX_REPLY_CHARS:
@@ -280,6 +304,36 @@ async def cmd_link(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     await update.message.reply_text(
         f"Linked you to Overseerr user @{overseerr_username}. You're set."
     )
+
+
+async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    if update.message is None or update.effective_user is None:
+        return
+    metrics.telegram_messages_total.labels(kind="command", command="reset").inc()
+    settings: Settings = context.application.bot_data[SETTINGS_KEY]
+    identity: Identity = context.application.bot_data[IDENTITY_KEY]
+    user = update.effective_user
+    if not await _is_authorized(user.id, identity, settings):
+        await update.message.reply_text(_NOT_LINKED_REPLY)
+        return
+
+    pool: AgentPool = context.application.bot_data[AGENT_POOL_KEY]
+    registry: ConfirmationRegistry = context.application.bot_data[CONFIRMATION_REGISTRY_KEY]
+    # Load-bearing order: reset() marks the Agent retired before this cancel
+    # runs, so can_use_tool refuses any destructive call the retired Agent's
+    # still-finishing turn might try, and the cancel can't race a fresh prompt.
+    dropped = await pool.reset(user.id)
+    cancelled = await registry.cancel_for_user(user.id)
+
+    sentences = []
+    if cancelled:
+        sentences.append("Cancelled the confirmation you had waiting — nothing was run.")
+    sentences.append(
+        "Fresh start — your next message begins a new conversation."
+        if dropped
+        else "Nothing to reset — your next message begins a new conversation."
+    )
+    await update.message.reply_text(" ".join(sentences))
 
 
 async def on_error(update: object, context: ContextTypes.DEFAULT_TYPE) -> None:

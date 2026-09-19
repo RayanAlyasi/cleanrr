@@ -5,12 +5,14 @@ import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.ext import CommandHandler
 
 from cleanrr.agent_pool import AgentPool
 from cleanrr.bot import (
     _QBIT_CLIENT_KEY,
     _RADARR_CLIENT_KEY,
     _SONARR_CLIENT_KEY,
+    BOT_COMMANDS,
     _on_shutdown,
     _on_startup,
     build_application,
@@ -26,6 +28,7 @@ from cleanrr.handlers import (
     cmd_help,
     cmd_invite,
     cmd_link,
+    cmd_reset,
     cmd_start,
     on_confirmation,
     on_error,
@@ -102,6 +105,8 @@ async def test_on_startup_starts_identity() -> None:
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(metrics_enabled=False)
 
     app = MagicMock()
@@ -109,6 +114,7 @@ async def test_on_startup_starts_identity() -> None:
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -123,6 +129,7 @@ async def test_on_startup_starts_identity() -> None:
 
     registry.start.assert_awaited_once()
     identity.start.assert_awaited_once()
+    pool.start.assert_awaited_once()
     app.bot.set_my_commands.assert_awaited_once()
     mock_metrics_start.assert_not_called()
 
@@ -135,6 +142,8 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(metrics_enabled=True, metrics_port=9200)
 
     app = MagicMock()
@@ -142,6 +151,7 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -169,6 +179,8 @@ async def test_on_startup_warns_when_no_admins_configured(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
 
     app = MagicMock()
@@ -176,6 +188,7 @@ async def test_on_startup_warns_when_no_admins_configured(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -205,6 +218,8 @@ async def test_on_startup_does_not_warn_when_admins_configured(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(admin_telegram_ids={424242, 515151})
 
     app = MagicMock()
@@ -212,6 +227,7 @@ async def test_on_startup_does_not_warn_when_admins_configured(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -238,6 +254,8 @@ async def test_on_startup_logs_admin_count_not_ids(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(admin_telegram_ids={424242, 515151})
 
     app = MagicMock()
@@ -245,6 +263,7 @@ async def test_on_startup_logs_admin_count_not_ids(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -271,6 +290,8 @@ async def test_on_startup_awaits_backfill_with_identity_client_and_settings() ->
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
     overseerr_client = MagicMock()
 
@@ -279,6 +300,7 @@ async def test_on_startup_awaits_backfill_with_identity_client_and_settings() ->
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
         OVERSEERR_CLIENT_KEY: overseerr_client,
     }
     app.bot.set_my_commands = AsyncMock()
@@ -303,6 +325,8 @@ async def test_on_startup_backfills_with_none_client_when_key_missing() -> None:
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
 
     app = MagicMock()
@@ -310,6 +334,7 @@ async def test_on_startup_backfills_with_none_client_when_key_missing() -> None:
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -336,6 +361,8 @@ async def test_on_startup_backfill_timeout_does_not_stop_startup(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
 
     app = MagicMock()
@@ -343,6 +370,7 @@ async def test_on_startup_backfill_timeout_does_not_stop_startup(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -367,6 +395,8 @@ async def test_on_startup_backfill_timeout_is_enforced_by_wait_for(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
 
     app = MagicMock()
@@ -374,6 +404,7 @@ async def test_on_startup_backfill_timeout_is_enforced_by_wait_for(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -403,6 +434,8 @@ async def test_on_startup_backfill_error_does_not_stop_startup(
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings()
 
     app = MagicMock()
@@ -410,6 +443,7 @@ async def test_on_startup_backfill_error_does_not_stop_startup(
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -435,6 +469,8 @@ async def test_on_startup_sets_missing_gauge_when_metrics_enabled() -> None:
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=2)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(metrics_enabled=True)
 
     app = MagicMock()
@@ -442,6 +478,7 @@ async def test_on_startup_sets_missing_gauge_when_metrics_enabled() -> None:
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -466,6 +503,8 @@ async def test_on_startup_does_not_set_missing_gauge_when_metrics_disabled() -> 
     identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=2)
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(metrics_enabled=False)
 
     app = MagicMock()
@@ -473,6 +512,7 @@ async def test_on_startup_does_not_set_missing_gauge_when_metrics_disabled() -> 
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -508,6 +548,8 @@ async def test_on_startup_runs_backfill_before_reading_the_gauge() -> None:
     identity.count_links_needing_overseerr_user_id = _fake_count
     registry = MagicMock()
     registry.start = AsyncMock()
+    pool = MagicMock()
+    pool.start = AsyncMock()
     settings = _make_settings(metrics_enabled=True)
 
     app = MagicMock()
@@ -515,6 +557,7 @@ async def test_on_startup_runs_backfill_before_reading_the_gauge() -> None:
         IDENTITY_KEY: identity,
         SETTINGS_KEY: settings,
         CONFIRMATION_REGISTRY_KEY: registry,
+        AGENT_POOL_KEY: pool,
     }
     app.bot.set_my_commands = AsyncMock()
 
@@ -537,7 +580,15 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
     assert isinstance(app.bot_data[IDENTITY_KEY], Identity)
 
     registered = [handler.callback for handler in app.handlers[0]]
-    assert registered == [cmd_start, cmd_help, cmd_invite, cmd_link, on_confirmation, on_message]
+    assert registered == [
+        cmd_start,
+        cmd_help,
+        cmd_invite,
+        cmd_link,
+        cmd_reset,
+        on_confirmation,
+        on_message,
+    ]
     # Must be enabled — a confirmation button tap has to reach on_confirmation
     # while the message that triggered it is still blocked awaiting that tap.
     assert app.concurrent_updates
@@ -545,3 +596,16 @@ def test_build_application_wires_bot_data_and_handlers() -> None:
     # reply_text raising Forbidden) is only logged internally by PTB and the
     # update is dropped with no other trace.
     assert on_error in app.error_handlers
+
+
+def test_build_application_registers_reset_command() -> None:
+    settings = _make_settings()
+    app = build_application(settings)
+
+    reset_handlers = [
+        handler
+        for handler in app.handlers[0]
+        if isinstance(handler, CommandHandler) and "reset" in handler.commands
+    ]
+    assert len(reset_handlers) == 1
+    assert any(cmd.command == "reset" for cmd in BOT_COMMANDS)

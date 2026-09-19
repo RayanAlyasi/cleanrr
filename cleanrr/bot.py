@@ -25,6 +25,7 @@ from cleanrr.handlers import (
     cmd_help,
     cmd_invite,
     cmd_link,
+    cmd_reset,
     cmd_start,
     on_confirmation,
     on_error,
@@ -42,6 +43,7 @@ BOT_COMMANDS = [
     BotCommand("start", "Sanity check; bot confirms it's online"),
     BotCommand("help", "List the commands available"),
     BotCommand("link", "Bind your Telegram account to an Overseerr user"),
+    BotCommand("reset", "Forget the conversation and start fresh"),
     BotCommand("invite", "Admin only — issue a link code for a friend"),
 ]
 
@@ -98,6 +100,7 @@ async def _on_startup(app: Application) -> None:
     await registry.start()
     identity: Identity = app.bot_data[IDENTITY_KEY]
     await identity.start()
+    await app.bot_data[AGENT_POOL_KEY].start()
     await app.bot.set_my_commands(BOT_COMMANDS)
     settings: Settings = app.bot_data[SETTINGS_KEY]
     if settings.admin_telegram_ids:
@@ -210,6 +213,7 @@ def build_application(settings: Settings) -> Application:
     app.add_handler(CommandHandler("help", cmd_help))
     app.add_handler(CommandHandler("invite", cmd_invite))
     app.add_handler(CommandHandler("link", cmd_link))
+    app.add_handler(CommandHandler("reset", cmd_reset))
     app.add_handler(CallbackQueryHandler(on_confirmation, pattern=f"^{re.escape(CALLBACK_PREFIX)}"))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, on_message))
     app.add_error_handler(on_error)
