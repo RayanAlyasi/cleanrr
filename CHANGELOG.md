@@ -1,5 +1,18 @@
 # Changelog
 
+## [0.8.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.1...v0.8.0) (2026-09-19)
+
+
+### Features
+
+* key links by the overseerr user id ([#121](https://github.com/RayanAlyasi/cleanrr/issues/121)) ([0008c15](https://github.com/RayanAlyasi/cleanrr/commit/0008c1592476e2ada139896910c0f80eb7bce955)), closes [#108](https://github.com/RayanAlyasi/cleanrr/issues/108)
+
+
+### Bug Fixes
+
+* drop stale replies, gate unlinked users ([#104](https://github.com/RayanAlyasi/cleanrr/issues/104)) ([dd902a0](https://github.com/RayanAlyasi/cleanrr/commit/dd902a06ff4de93444dcada533bff74a7779b080))
+* recover a dead agent, warn on no admins ([#116](https://github.com/RayanAlyasi/cleanrr/issues/116)) ([e76faaa](https://github.com/RayanAlyasi/cleanrr/commit/e76faaaf53164825e51a7afd55d4ef0b92c65551)), closes [#106](https://github.com/RayanAlyasi/cleanrr/issues/106) [#107](https://github.com/RayanAlyasi/cleanrr/issues/107)
+
 ## [0.7.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.0...v0.7.1) (2026-09-14)
 
 
