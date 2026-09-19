@@ -33,9 +33,10 @@ Every PR must pass:
 - **`bandit -r cleanrr/ -ll`** — security smells
 - **`pytest`** — tests (includes `tests/test_consistency.py` which checks docs↔code drift)
 - **`jscpd`** — duplicate-code detection (runs in CI)
-- **Docker build + Trivy scan** — the container image is built for linux/amd64 and scanned with Trivy (CRITICAL/HIGH, fail on fixable) on every PR, and the package is imported inside the built image (runs in CI)
 
 CI runs all of these on every PR. `pre-commit install` runs the fast ones locally before each commit so they rarely fail in CI.
+
+The `Docker` workflow also builds the container image for linux/amd64 on every PR, scans it with Trivy for CRITICAL and HIGH vulnerabilities that have a fix available, and imports the package inside the built image. It reports on every PR but is not a required status check.
 
 Any PR that adds or changes functionality must add or update tests covering it in the same PR — coverage doesn't happen retroactively.
 
@@ -53,7 +54,7 @@ Any PR that adds or changes functionality must add or update tests covering it i
 
 Direct runtime dependencies are declared in `pyproject.toml` with version ranges, chosen from actively-maintained, widely-used PyPI packages. GitHub Actions used in CI/CD are pinned to an exact commit SHA rather than a mutable tag.
 
-`pyproject.toml` declares the compatible range for each direct dependency; a root `constraints.txt` pins the exact version that CI, the release image, and a local venv install actually resolve to. `tests/test_consistency.py` fails if a declared dependency has no pin, a pin names something not declared in `pyproject.toml`, a pin falls outside its declared range, or the `Dockerfile` or either CI install line stops passing `-c constraints.txt`. semgrep is pinned there too, even though it's a CI-only tool with no entry in the `dev` extra — the test carries a small documented exception list for it. ruff's version appears twice, in `constraints.txt` and the `ruff-pre-commit` `rev` in `.pre-commit-config.yaml`; the same test keeps the two equal, so a ruff bump moves both lines in one commit. Dependabot bumps these pins as ordinary PRs under the existing weekly schedule and 7-day cooldown — no new ecosystem is added.
+`pyproject.toml` declares the compatible range for each direct dependency; a root `constraints.txt` pins the exact version that CI, the release image, and a local venv install actually resolve to. `tests/test_consistency.py` fails if a declared dependency has no pin, a pin names something not declared in `pyproject.toml`, a pin falls outside its declared range, or the `Dockerfile` or either CI install line stops passing `-c constraints.txt`. semgrep is pinned there too, even though it's a CI-only tool with no entry in the `dev` extra — the test carries a small documented exception list for it. ruff's version appears twice, in `constraints.txt` and the `ruff-pre-commit` `rev` in `.pre-commit-config.yaml`; the same test keeps the two equal, so a ruff bump moves both lines in one commit. Dependabot does not read `.pre-commit-config.yaml`, so a Dependabot ruff bump changes only `constraints.txt`, and `test_precommit_ruff_rev_matches_pinned_ruff` fails until the `rev` is updated on the same branch. Dependabot bumps these pins as ordinary PRs under the existing weekly schedule and 7-day cooldown — no new ecosystem is added. Transitive dependencies and the build backend (`hatchling` and `hatch-vcs`) are not pinned and resolve to the newest compatible release at install time.
 
 Dependabot tracks updates for the `pip` and `github-actions` ecosystems, plus the Docker base image, on a weekly schedule with a 7-day cooldown — a newly-published version has to sit for a week before Dependabot proposes it, so a just-published (and potentially compromised) release doesn't get pulled in immediately. Updates land as normal PRs and go through the same CI gate (tests, lint, security scans) as any other change.
 
