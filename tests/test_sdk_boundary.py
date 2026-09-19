@@ -4,15 +4,17 @@
 cleanrr — translates it into the CLI flags that actually run. The
 confirmation gate (`can_use_tool`) depends on that translation never
 auto-approving a write tool via `--allowedTools`, and the sandboxing depends
-on `--tools` staying empty and `--strict-mcp-config` staying set. These
-tests build the real command line with `SubprocessCLITransport._build_command()`
-and never call `connect()`, `query()` or `receive_response()` — no
-subprocess, no network, no API key.
+on `--tools` staying empty and `--strict-mcp-config` staying set. Isolation
+depends on the CLI being told to load no filesystem settings and to run in a
+pinned empty directory. These tests build the real command line with
+`SubprocessCLITransport._build_command()` and never call `connect()`,
+`query()` or `receive_response()` — no subprocess, no network, no API key.
 """
 
 from __future__ import annotations
 
 import json
+from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
@@ -20,7 +22,7 @@ from claude_agent_sdk import ClaudeAgentOptions, CLINotFoundError
 from claude_agent_sdk._internal.transport.subprocess_cli import SubprocessCLITransport
 from pydantic import HttpUrl, SecretStr
 
-from cleanrr.agent import DEFAULT_SYSTEM_PROMPT, Agent
+from cleanrr.agent import DEFAULT_SYSTEM_PROMPT, Agent, _isolated_cwd
 from cleanrr.bot import (
     _build_overseerr_client,
     _build_qbit_client,
@@ -133,6 +135,30 @@ async def test_read_tools_reach_the_allowed_tools_flag(
 async def test_strict_mcp_config_flag_is_set(monkeypatch: pytest.MonkeyPatch) -> None:
     cmd = await _cli_command(monkeypatch)
     assert "--strict-mcp-config" in cmd
+
+
+async def test_setting_sources_flag_loads_no_filesystem_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    cmd = await _cli_command(monkeypatch)
+    sources = [arg for arg in cmd if arg.startswith("--setting-sources")]
+    assert sources == ["--setting-sources="], (
+        "a permissions.allow entry in a filesystem settings file auto-approves "
+        "that tool and skips can_use_tool entirely"
+    )
+
+
+async def test_the_cli_runs_in_a_directory_with_no_claude_settings(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    options = await _capture_options(monkeypatch)
+    transport = _transport(options)
+    assert transport._cwd is not None
+    assert transport._cwd == str(_isolated_cwd())
+    cwd = Path(transport._cwd)
+    assert cwd.is_dir()
+    assert not (cwd / ".claude").exists()
+    assert transport._cwd != str(Path.cwd())
 
 
 async def test_system_prompt_flag_carries_the_project_prompt(
