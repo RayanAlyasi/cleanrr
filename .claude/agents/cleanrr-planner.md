@@ -72,8 +72,12 @@ Each task is self-contained and uses exactly these headings:
 - **Verification** — `bash .claude/hooks/gate.sh` plus any targeted command, and what passing looks like.
 - **Invariants** — the ones from `.claude/rules/` and `THREAT_MODEL.md` that this task can break.
 - **Docs and compliance** — which of README, `.env.example`, `ARCHITECTURE.md`, `THREAT_MODEL.md`, `SECURITY.md` must change, or "none". A new tool, actor, or external interface always changes at least one of these.
+- **Commit subject** — one Conventional Commit subject for the task, to `.claude/rules/commit-style.md`. The orchestrator commits each task under it.
 
-Run the correctness pass from `.claude/rules/spec-quality.md` on every spec before you write it down: counter vs gauge, symmetric paths, error paths, idempotency, conditional work.
+Run the correctness pass from `.claude/rules/spec-quality.md` on every spec before you write it down: counter vs gauge, symmetric paths, error paths, idempotency, conditional work. Two more checks, each of which has cost a whole fix round:
+
+- **A new message must not contradict an existing doc.** When a task adds or rewords a reply, a log line, or a warning, grep README, `.env.example`, `ARCHITECTURE.md`, and `THREAT_MODEL.md` for the claim it makes. Any sentence that now disagrees goes into a task's Files, in the same plan.
+- **Every test step must be runnable on the path it names.** Do not prescribe an assertion on a mock the code under test cannot reach on that path (for example, asserting on a client that is `None` there). Walk each test step against the control flow you specified.
 
 ## Plan file
 
