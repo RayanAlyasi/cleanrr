@@ -201,18 +201,26 @@ def build_tools(
                     is_error=True,
                 )
 
-        stalled = [t for t in torrents if t.get("state") in _STALLED_STATES][:10]
+        matching = [t for t in torrents if t.get("state") in _STALLED_STATES]
+        stalled = matching[:10]
 
         if not stalled:
             metrics.tool_calls_total.labels(tool="list_stalled_torrents", status="success").inc()
             return text_result("No stalled torrents right now.", is_error=False)
 
-        lines: list[str] = [f"Stalled torrents ({len(stalled)}):"]
+        total = len(matching)
+        header = (
+            f"Stalled torrents (showing {len(stalled)} of {total}):"
+            if total > len(stalled)
+            else f"Stalled torrents ({len(stalled)}):"
+        )
+        lines: list[str] = [header]
         tracker_lookups_made = 0
         tracker_message_appended = False
         for t in stalled:
             # Torrent name and state are set by the torrent's creator —
-            # untrusted input; bound both before interpolation.
+            # untrusted input; bound both before interpolation, and quote
+            # the name as data so it can't forge our own "(hash …)" syntax.
             name = bound_text(t.get("name"), limit=_NAME_CHARS, default="unknown")
             state = bound_text(t.get("state"), limit=_STATE_CHARS, default="unknown")
             size_bytes = t.get("size", 0)
@@ -226,7 +234,7 @@ def build_tools(
             size_gb = int(size_bytes) / 1_073_741_824
             pct = int(float(progress) * 100)
 
-            line = f"- {name} [{state}] {pct}% of {size_gb:.1f} GB — idle {age}"
+            line = f"- {quote_upstream(name)} [{state}] {pct}% of {size_gb:.1f} GB — idle {age}"
             hints = _stall_hints(t)
             if hints:
                 line += f"; {', '.join(hints)}"
