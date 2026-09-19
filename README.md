@@ -27,7 +27,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 - Runs as a Docker service on the same network as your existing media stack.
 - Chat is limited to linked users and admins; everyone else is told to ask for a link code. Replies via Claude (model configurable — defaults to Sonnet).
 - Maintains a per-user conversation session so follow-up questions retain context.
-- Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts.
+- Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts. The friend's numeric Overseerr user id is captured when the code is issued, so renaming a Plex or Jellyfin account doesn't break the link.
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
 - TV show status via Sonarr — see what's downloaded and what's downloading.
 - Movie status via Radarr — see what's downloaded and what's downloading.
