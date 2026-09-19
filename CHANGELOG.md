@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.7.2](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.1...v0.7.2) (2026-09-19)
+
+
+### Bug Fixes
+
+* drop stale replies, gate unlinked users ([#104](https://github.com/RayanAlyasi/cleanrr/issues/104)) ([dd902a0](https://github.com/RayanAlyasi/cleanrr/commit/dd902a06ff4de93444dcada533bff74a7779b080))
+* recover a dead agent, warn on no admins ([#116](https://github.com/RayanAlyasi/cleanrr/issues/116)) ([e76faaa](https://github.com/RayanAlyasi/cleanrr/commit/e76faaaf53164825e51a7afd55d4ef0b92c65551)), closes [#106](https://github.com/RayanAlyasi/cleanrr/issues/106) [#107](https://github.com/RayanAlyasi/cleanrr/issues/107)
+
 ## [0.7.1](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.0...v0.7.1) (2026-09-14)
 
 
