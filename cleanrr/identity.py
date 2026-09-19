@@ -53,6 +53,11 @@ _SCHEMA_ADDITIONS: tuple[tuple[str, str, str], ...] = (
         "overseerr_user_id_linked_at",
         "ALTER TABLE user_links ADD COLUMN overseerr_user_id_linked_at INTEGER",
     ),
+    (
+        "user_links",
+        "overseerr_user_id_username",
+        "ALTER TABLE user_links ADD COLUMN overseerr_user_id_username TEXT",
+    ),
 )
 
 
@@ -151,14 +156,22 @@ class Identity:
         # leave a previous account's id behind.
         await self._conn.execute(
             "INSERT INTO user_links (telegram_user_id, overseerr_username, linked_at,"
-            " overseerr_user_id, overseerr_user_id_linked_at)"
-            " VALUES (?, ?, ?, ?, ?)"
+            " overseerr_user_id, overseerr_user_id_linked_at, overseerr_user_id_username)"
+            " VALUES (?, ?, ?, ?, ?, ?)"
             " ON CONFLICT(telegram_user_id) DO UPDATE SET"
             " overseerr_username = excluded.overseerr_username,"
             " linked_at = excluded.linked_at,"
             " overseerr_user_id = excluded.overseerr_user_id,"
-            " overseerr_user_id_linked_at = excluded.overseerr_user_id_linked_at",
-            (telegram_user_id, overseerr_username, now, overseerr_user_id, now),
+            " overseerr_user_id_linked_at = excluded.overseerr_user_id_linked_at,"
+            " overseerr_user_id_username = excluded.overseerr_user_id_username",
+            (
+                telegram_user_id,
+                overseerr_username,
+                now,
+                overseerr_user_id,
+                now,
+                overseerr_username,
+            ),
         )
         await self._conn.commit()
         safe_username = overseerr_username.replace("\n", " ").replace("\r", " ")
@@ -175,18 +188,30 @@ class Identity:
             raise RuntimeError("Identity.start() must be called before get_linked_user()")
         cursor = await self._conn.execute(
             "SELECT telegram_user_id, overseerr_username, linked_at,"
-            " overseerr_user_id, overseerr_user_id_linked_at"
+            " overseerr_user_id, overseerr_user_id_linked_at, overseerr_user_id_username"
             " FROM user_links WHERE telegram_user_id = ?",
             (telegram_user_id,),
         )
         row = await cursor.fetchone()
         if row is None:
             return None
-        telegram_id, overseerr_username, linked_at, stored_id, stored_id_linked_at = row
-        # An image without these columns only ever rewrites linked_at, never the
-        # snapshot, so a mismatch means the stored id predates the current link.
+        (
+            telegram_id,
+            overseerr_username,
+            linked_at,
+            stored_id,
+            stored_id_linked_at,
+            stored_id_username,
+        ) = row
+        # An image without these columns rewrites overseerr_username and linked_at
+        # and neither snapshot, so a mismatch on either means the stored id
+        # predates the current link.
         overseerr_user_id = (
-            stored_id if isinstance(stored_id, int) and stored_id_linked_at == linked_at else None
+            stored_id
+            if isinstance(stored_id, int)
+            and stored_id_linked_at == linked_at
+            and stored_id_username == overseerr_username
+            else None
         )
         return LinkedUser(
             telegram_user_id=telegram_id,
@@ -200,12 +225,15 @@ class Identity:
             raise RuntimeError("Identity.start() must be called before record_overseerr_user_id()")
         cursor = await self._conn.execute(
             "UPDATE user_links"
-            " SET overseerr_user_id = ?, overseerr_user_id_linked_at = ?"
+            " SET overseerr_user_id = ?, overseerr_user_id_linked_at = ?,"
+            " overseerr_user_id_username = ?"
             " WHERE telegram_user_id = ? AND overseerr_username = ? AND linked_at = ?"
-            " AND (overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at)",
+            " AND (overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at"
+            " OR overseerr_user_id_username IS NOT overseerr_username)",
             (
                 overseerr_user_id,
                 link.linked_at,
+                link.overseerr_username,
                 link.telegram_user_id,
                 link.overseerr_username,
                 link.linked_at,
@@ -229,6 +257,7 @@ class Identity:
             " overseerr_user_id, overseerr_user_id_linked_at"
             " FROM user_links"
             " WHERE overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at"
+            " OR overseerr_user_id_username IS NOT overseerr_username"
             " ORDER BY telegram_user_id"
         )
         rows = await cursor.fetchall()
@@ -250,6 +279,7 @@ class Identity:
         cursor = await self._conn.execute(
             "SELECT COUNT(*) FROM user_links"
             " WHERE overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at"
+            " OR overseerr_user_id_username IS NOT overseerr_username"
         )
         row = await cursor.fetchone()
         return int(row[0]) if row else 0

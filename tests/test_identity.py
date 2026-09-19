@@ -386,6 +386,59 @@ async def test_get_linked_user_treats_rollback_era_row_as_stale(tmp_path: Path) 
         await store.stop()
 
 
+async def test_get_linked_user_treats_same_second_rollback_as_stale(tmp_path: Path) -> None:
+    # A pre-change image's upsert can land in the same clock second as the
+    # original link, so the linked_at snapshot alone can't tell a genuine
+    # re-link from a rollback-era write that never touched the id columns.
+    store = await _store(tmp_path)
+    try:
+        code = await store.issue_code("alice", overseerr_user_id=7)
+        await store.redeem_code(code, telegram_user_id=12345)
+        alice_link = await store.get_linked_user(12345)
+        assert alice_link is not None
+
+        await _run_legacy_upsert(tmp_path / "test.db", 12345, "bob", alice_link.linked_at)
+
+        link = await store.get_linked_user(12345)
+        assert link is not None
+        assert link.overseerr_username == "bob"
+        assert link.overseerr_user_id is None
+
+        needing = await store.links_needing_overseerr_user_id()
+        assert any(row.telegram_user_id == 12345 for row in needing)
+        assert await store.count_links_needing_overseerr_user_id() == 1
+
+        assert await store.record_overseerr_user_id(link, 9) is True
+        updated = await store.get_linked_user(12345)
+        assert updated is not None
+        assert updated.overseerr_user_id == 9
+    finally:
+        await store.stop()
+
+
+async def test_get_linked_user_same_second_relink_same_username_keeps_id(
+    tmp_path: Path,
+) -> None:
+    # The residual case of the above: a same-second legacy upsert that
+    # re-links to the same account is not a rollback, and the id is still
+    # right for it.
+    store = await _store(tmp_path)
+    try:
+        code = await store.issue_code("alice", overseerr_user_id=7)
+        await store.redeem_code(code, telegram_user_id=12345)
+        alice_link = await store.get_linked_user(12345)
+        assert alice_link is not None
+
+        await _run_legacy_upsert(tmp_path / "test.db", 12345, "alice", alice_link.linked_at)
+
+        link = await store.get_linked_user(12345)
+        assert link is not None
+        assert link.overseerr_username == "alice"
+        assert link.overseerr_user_id == 7
+    finally:
+        await store.stop()
+
+
 async def test_record_overseerr_user_id_persists_and_rejects_second_write(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
@@ -546,5 +599,38 @@ async def test_start_completes_partially_applied_schema(tmp_path: Path) -> None:
         assert link is not None
         assert link.overseerr_username == "alice"
         assert link.overseerr_user_id == 7
+    finally:
+        await store.stop()
+
+
+async def test_start_adds_only_missing_username_snapshot_column(tmp_path: Path) -> None:
+    db_path = tmp_path / "test.db"
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.executescript(_LEGACY_SCHEMA)
+        await conn.execute("ALTER TABLE link_codes ADD COLUMN overseerr_user_id INTEGER")
+        await conn.execute("ALTER TABLE user_links ADD COLUMN overseerr_user_id INTEGER")
+        await conn.execute("ALTER TABLE user_links ADD COLUMN overseerr_user_id_linked_at INTEGER")
+        await conn.execute(
+            "INSERT INTO user_links"
+            " (telegram_user_id, overseerr_username, linked_at,"
+            " overseerr_user_id, overseerr_user_id_linked_at)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (12345, "alice", 1_000, 7, 1_000),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+    store = Identity(db_path=db_path, code_ttl=timedelta(hours=1))
+    await store.start()
+    try:
+        link = await store.get_linked_user(12345)
+        assert link is not None
+        assert link.overseerr_username == "alice"
+        assert link.overseerr_user_id is None
+
+        needing = await store.links_needing_overseerr_user_id()
+        assert any(row.telegram_user_id == 12345 for row in needing)
     finally:
         await store.stop()
