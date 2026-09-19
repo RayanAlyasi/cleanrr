@@ -146,6 +146,16 @@ async def test_setting_sources_flag_loads_no_filesystem_settings(
         "a permissions.allow entry in a filesystem settings file auto-approves "
         "that tool and skips can_use_tool entirely"
     )
+    assert "--settings" not in cmd, (
+        "--settings makes the CLI read settings from a path that setting_sources=[] does not gate"
+    )
+    assert "--plugin-dir" not in cmd, (
+        "--plugin-dir makes the CLI read plugin content from a path that "
+        "setting_sources=[] does not gate"
+    )
+    assert "--add-dir" not in cmd, (
+        "--add-dir makes the CLI read settings from a path that setting_sources=[] does not gate"
+    )
 
 
 async def test_the_cli_runs_in_a_directory_with_no_claude_settings(
@@ -157,6 +167,7 @@ async def test_the_cli_runs_in_a_directory_with_no_claude_settings(
     assert transport._cwd == str(_isolated_cwd())
     cwd = Path(transport._cwd)
     assert cwd.is_dir()
+    assert cwd.name.startswith("cleanrr-agent-")
     assert not (cwd / ".claude").exists()
     assert transport._cwd != str(Path.cwd())
 

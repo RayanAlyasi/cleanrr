@@ -196,8 +196,8 @@ class Agent:
             # No filesystem settings: a permissions.allow entry in ~/.claude or in a
             # checkout's .claude/settings*.json auto-approves that tool and skips
             # can_use_tool entirely, which is the confirm/cancel gate. This also
-            # stops CLAUDE.md discovery, which cleanrr never relied on — the
-            # system_prompt above is always the full prompt.
+            # stops user- and project-scope CLAUDE.md discovery, which cleanrr
+            # never relied on — the system_prompt above is always the full prompt.
             setting_sources=[],
             cwd=_isolated_cwd(),
         )

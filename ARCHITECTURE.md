@@ -12,7 +12,7 @@ Telegram user ──DM──> Telegram API ──> cleanrr (Docker)
                                                                        qBittorrent
 ```
 
-Single Python process, single container. Tools are defined as in-process `@tool` functions on the Agent SDK — no separate MCP server processes to run. Each Telegram user gets their own dedicated `Agent` (one Claude CLI subprocess), lazily created and capped by `AgentPool` — see [Project layout](#project-layout) below. Each subprocess runs with filesystem settings and `CLAUDE.md` discovery disabled, in a pinned empty working directory, so nothing on the host changes what the agent is allowed to do.
+Single Python process, single container. Tools are defined as in-process `@tool` functions on the Agent SDK — no separate MCP server processes to run. Each Telegram user gets their own dedicated `Agent` (one Claude CLI subprocess), lazily created and capped by `AgentPool` — see [Project layout](#project-layout) below. Each subprocess runs with user, project and local settings and their `CLAUDE.md` discovery disabled, in a pinned empty working directory, so a settings file in a checkout or a home directory cannot change what the agent is allowed to do; enterprise managed settings are outside this control.
 
 ## Actors
 
