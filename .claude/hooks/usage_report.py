@@ -14,7 +14,8 @@ import sys
 from pathlib import Path
 
 # USD per million tokens: (base input, output). Source: platform.claude.com pricing, 2026-09-19.
-# Cache read is 0.1x base input (0.025x on Fable); cache write is priced at the 1-hour rate, 2x.
+# Cache read is 0.1x base input (0.025x on Fable). A cache write is 1.25x at the 5-minute TTL
+# and 2x at the 1-hour TTL; subagents write at 5 minutes, the main session at 1 hour.
 PRICES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.0, 50.0),
     "claude-opus-5": (5.0, 25.0),
@@ -27,6 +28,7 @@ TOKEN_KEYS = (
     "cache_read_input_tokens",
     "output_tokens",
 )
+SHORT_WRITE_KEY = "ephemeral_5m_input_tokens"
 
 
 def _price(model: str) -> tuple[float, float, float] | None:
@@ -59,10 +61,13 @@ def summarise(
             continue
         model = message.get("model") or model
         # A streamed message appears once per content block; keep the largest count seen.
-        seen = per_message.setdefault(message_id, dict.fromkeys(TOKEN_KEYS, 0))
+        seen = per_message.setdefault(message_id, dict.fromkeys((*TOKEN_KEYS, SHORT_WRITE_KEY), 0))
         for key in TOKEN_KEYS:
             seen[key] = max(seen[key], int(usage.get(key) or 0))
+        breakdown = usage.get("cache_creation") or {}
+        seen[SHORT_WRITE_KEY] = max(seen[SHORT_WRITE_KEY], int(breakdown.get(SHORT_WRITE_KEY) or 0))
     totals = {key: sum(m[key] for m in per_message.values()) for key in TOKEN_KEYS}
+    short_writes = sum(m[SHORT_WRITE_KEY] for m in per_message.values())
     last = list(per_message.values())[-1] if per_message else dict.fromkeys(TOKEN_KEYS, 0)
     context_end = (
         last["input_tokens"] + last["cache_creation_input_tokens"] + last["cache_read_input_tokens"]
@@ -73,7 +78,9 @@ def summarise(
         base, out, read_mult = price
         cost = (
             totals["input_tokens"] * base
-            + totals["cache_creation_input_tokens"] * base * 2
+            + short_writes * base * 1.25
+            # A write with no TTL breakdown is priced at the 1-hour rate.
+            + (totals["cache_creation_input_tokens"] - short_writes) * base * 2
             + totals["cache_read_input_tokens"] * base * read_mult
             + totals["output_tokens"] * out
         ) / 1e6
