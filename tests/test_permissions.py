@@ -567,6 +567,77 @@ async def test_write_tools_set_is_explicit() -> None:
 
 
 # ---------------------------------------------------------------------------
+# is_retired
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_retired_denies_write_tool_without_reserving_or_sending() -> None:
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(
+        bot, reg, settings, formatters={}, telegram_user_id=42, is_retired=lambda: True
+    )
+
+    before = _counter("remove_my_request", "denied")
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+
+    assert isinstance(result, PermissionResultDeny)
+    bot.send_message.assert_not_awaited()
+    assert reg._entries == {}  # type: ignore[attr-defined]
+    assert _counter("remove_my_request", "denied") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_retired_still_allows_a_read_only_tool() -> None:
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(
+        bot, reg, settings, formatters={}, telegram_user_id=42, is_retired=lambda: True
+    )
+
+    result = await cb("mcp__cleanrr__list_my_requests", {}, MagicMock())
+
+    assert isinstance(result, PermissionResultAllow)
+    bot.send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_not_retired_sends_the_prompt_exactly_as_today() -> None:
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(
+        bot, reg, settings, formatters={}, telegram_user_id=42, is_retired=lambda: False
+    )
+
+    before = _counter("remove_my_request", "confirmed")
+
+    async def _resolve_after_send() -> None:
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            async with reg._lock:  # type: ignore[attr-defined]
+                if reg._entries:  # type: ignore[attr-defined]
+                    cid = next(iter(reg._entries))  # type: ignore[attr-defined]
+                    break
+        else:
+            raise AssertionError("no pending confirmation appeared")
+        await reg.resolve(cid, telegram_user_id=42, allowed=True)
+
+    results = await asyncio.gather(
+        cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+        _resolve_after_send(),
+    )
+
+    result = results[0]
+    assert isinstance(result, PermissionResultAllow)
+    bot.send_message.assert_awaited_once()
+    assert _counter("remove_my_request", "confirmed") == before + 1
+
+
+# ---------------------------------------------------------------------------
 # Confirmation prompt formatter
 # ---------------------------------------------------------------------------
 

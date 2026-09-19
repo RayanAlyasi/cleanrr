@@ -54,12 +54,15 @@ def make_can_use_tool(
     formatters: dict[str, ConfirmationFormatter],
     *,
     telegram_user_id: int,
+    is_retired: Callable[[], bool] | None = None,
 ) -> CanUseTool:
     """Build the ``can_use_tool`` callback wired to a specific Telegram bot + registry.
 
     ``telegram_user_id`` is the caller this callback is scoped to — each
     per-user Agent builds its own callback via this factory rather than
-    reading a shared, process-wide "current user" global.
+    reading a shared, process-wide "current user" global. ``is_retired`` is
+    the retirement check the owning Agent passes, consulted before a new
+    confirmation prompt can be created.
     """
 
     async def _resolve_prompt_text(tool_name: str, tool_args: dict[str, Any]) -> str:
@@ -86,6 +89,11 @@ def make_can_use_tool(
         bare_name = tool_name.rsplit("__", 1)[-1]
         if bare_name not in WRITE_TOOLS:
             return PermissionResultAllow(updated_input=input_data)
+
+        if is_retired is not None and is_retired():
+            metrics.destructive_actions_total.labels(tool=bare_name, outcome="denied").inc()
+            logger.warning("refused %s: this conversation was reset", bare_name)
+            return PermissionResultDeny(message="the user reset this conversation")
 
         if bare_name in ADMIN_ONLY_TOOLS and telegram_user_id not in settings.admin_telegram_ids:
             metrics.tool_calls_total.labels(tool=bare_name, status="unauthorized").inc()

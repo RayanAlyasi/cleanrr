@@ -8,10 +8,15 @@ from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
-from claude_agent_sdk import AssistantMessage, TextBlock
+from claude_agent_sdk import (
+    AssistantMessage,
+    PermissionResultAllow,
+    PermissionResultDeny,
+    TextBlock,
+)
 from pydantic import HttpUrl, SecretStr
 
-from cleanrr.agent import Agent
+from cleanrr.agent import Agent, AgentRetired
 from cleanrr.bot import (
     _build_overseerr_client,
     _build_qbit_client,
@@ -1390,3 +1395,234 @@ async def test_respond_does_not_rebuild_when_the_client_is_healthy() -> None:
 
     assert result == "hello back"
     agent.start.assert_not_awaited()
+
+
+# ---------------------------------------------------------------------------
+# Retirement
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_start_after_mark_retired_raises_agent_retired() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent.mark_retired()
+
+    with pytest.raises(AgentRetired):
+        await agent.start(1)
+
+
+@pytest.mark.asyncio
+async def test_respond_on_retired_agent_with_no_client_raises_agent_retired() -> None:
+    """The #116 rebuild path (respond() -> _restart_client() -> start())
+    must not resurrect a retired Agent."""
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._telegram_user_id = 1
+    agent.mark_retired()
+
+    with pytest.raises(AgentRetired):
+        await agent.respond(prompt="hello")
+
+
+@pytest.mark.asyncio
+async def test_retire_on_idle_agent_awaits_stop_once_and_releases_lock() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+
+    await agent.retire()
+
+    agent.stop.assert_awaited_once()
+    assert agent.is_busy is False
+    assert agent.is_retired is True
+
+
+@pytest.mark.asyncio
+async def test_retire_waits_for_in_flight_turn() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+
+    await agent._lock.acquire()
+    task = asyncio.create_task(agent.retire())
+    await asyncio.sleep(0)
+    agent.stop.assert_not_awaited()
+
+    agent._lock.release()
+    await task
+
+    agent.stop.assert_awaited_once()
+    assert agent.is_busy is False
+
+
+@pytest.mark.asyncio
+async def test_retire_stops_anyway_when_lock_wait_expires(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._telegram_user_id = 77
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent._max_lock_hold_seconds = lambda: 0.01  # type: ignore[method-assign]
+
+    await agent._lock.acquire()  # simulates a turn still in flight
+
+    with caplog.at_level(logging.WARNING):
+        await agent.retire()
+
+    agent.stop.assert_awaited_once()
+    assert "77" in caplog.text
+    # retire() never acquired the lock (the wait expired), so it must not
+    # release one it doesn't hold — the test's own acquire is still in force.
+    assert agent._lock.locked()
+
+
+@pytest.mark.asyncio
+async def test_retire_twice_is_safe() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+
+    await agent.retire()
+    await agent.retire()
+
+    assert agent.is_retired is True
+    assert agent.stop.await_count == 2
+
+
+@pytest.mark.asyncio
+async def test_stop_twice_closes_the_stack_once() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    fake_stack = MagicMock()
+    fake_stack.aclose = AsyncMock()
+    agent._stack = fake_stack  # type: ignore[assignment]
+
+    await agent.stop()
+    await agent.stop()
+
+    fake_stack.aclose.assert_awaited_once()
+
+
+def test_idle_seconds_and_touch() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    agent._last_active_at = time.monotonic() - 100
+
+    assert agent.idle_seconds >= 100
+
+    agent.touch()
+
+    assert agent.idle_seconds < 1
+
+
+@pytest.mark.asyncio
+async def test_is_busy_reflects_lock_state() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    assert agent.is_busy is False
+
+    await agent._lock.acquire()
+    assert agent.is_busy is True
+
+    agent._lock.release()
+    assert agent.is_busy is False
+
+
+@pytest.mark.asyncio
+async def test_start_wired_can_use_tool_denies_write_tool_once_retired(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The can_use_tool callback captured at start() must consult retirement
+    state live through the closure over self._retired, not a value frozen
+    at start() time — a dying turn's late tool call must still be denied."""
+    from cleanrr import agent as agent_module
+
+    captured_options: dict[str, object] = {}
+
+    class _FakeSDKClient:
+        def __init__(self, options: object) -> None:
+            captured_options["options"] = options
+
+        async def __aenter__(self) -> _FakeSDKClient:
+            return self
+
+        async def __aexit__(self, *a: object) -> None:
+            return None
+
+    monkeypatch.setattr(agent_module, "ClaudeSDKClient", _FakeSDKClient)
+
+    settings = Settings(
+        telegram_bot_token=SecretStr("test"),
+        anthropic_api_key=SecretStr("sk-test"),
+        overseerr_url=HttpUrl("http://overseerr:5055"),
+        overseerr_api_key=SecretStr("ov-key"),
+    )
+    bot = MagicMock()
+    bot.send_message = AsyncMock()
+    agent = _make_agent(settings, telegram_bot=bot)
+    await agent.start(1)
+
+    opts = captured_options["options"]
+    can_use_tool = opts.can_use_tool  # type: ignore[union-attr]
+
+    agent.mark_retired()
+
+    deny_result = await can_use_tool(
+        "mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()
+    )
+    allow_result = await can_use_tool(
+        "mcp__cleanrr__find_my_request", {"title": "Dune"}, MagicMock()
+    )
+
+    assert isinstance(deny_result, PermissionResultDeny)
+    assert isinstance(allow_result, PermissionResultAllow)
+    bot.send_message.assert_not_awaited()
+
+    await agent.stop()
