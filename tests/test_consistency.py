@@ -17,10 +17,12 @@ from packaging.requirements import Requirement
 from packaging.utils import canonicalize_name
 
 from cleanrr.config import Settings
+from cleanrr.permissions import WRITE_TOOLS
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 ENV_EXAMPLE = REPO_ROOT / ".env.example"
 README = REPO_ROOT / "README.md"
+THREAT_MODEL = REPO_ROOT / "THREAT_MODEL.md"
 BOT_PY = REPO_ROOT / "cleanrr" / "bot.py"
 CONSTRAINTS = REPO_ROOT / "constraints.txt"
 PYPROJECT = REPO_ROOT / "pyproject.toml"
@@ -225,3 +227,19 @@ def test_ci_only_pins_are_installed_by_a_ci_job() -> None:
             f"{name} is in _CI_ONLY_PINS but is also declared in pyproject.toml "
             "— it isn't CI-only, drop it from _CI_ONLY_PINS"
         )
+
+
+def test_settings_fields_are_documented_in_readme() -> None:
+    text = README.read_text(encoding="utf-8")
+    missing = {name for name in _settings_env_names() if not re.search(rf"\b{name}\b", text)}
+    assert not missing, f"Settings fields missing from README.md: {sorted(missing)}"
+
+
+@pytest.mark.parametrize("document", [README, THREAT_MODEL], ids=lambda path: path.name)
+def test_every_write_tool_is_named_in_the_security_docs(document: Path) -> None:
+    text = document.read_text(encoding="utf-8")
+    missing = {name for name in WRITE_TOOLS if not re.search(rf"\b{name}\b", text)}
+    assert not missing, (
+        f"Write tools not named in {document.name}: {sorted(missing)}. A tool that can change "
+        "or delete something is documented where an operator and an assessor will look."
+    )

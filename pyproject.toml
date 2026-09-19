@@ -93,6 +93,10 @@ reportPrivateUsage = "none"
 
 [[tool.pyright.executionEnvironments]]
 root = "tests"
+# Without this, `import cleanrr` from a test resolves through the editable
+# install, which always points at the main checkout: inside a git worktree
+# pyright then type-checks the tests against the wrong copy of the package.
+extraPaths = ["."]
 # tests/ share a **overrides: object fixture pattern whose dict.update()
 # call strict mode can't cleanly resolve overload-wise, and construct
 # ad-hoc literal fixture dicts whose shapes vary across test functions in
