@@ -155,8 +155,9 @@ def build_tools(
                     try:
                         queue_data = queue_resp.json()
                         if isinstance(queue_data, dict):
-                            queue_records = queue_data.get("records", [])
-                            queue_read_ok = True
+                            records = queue_data.get("records")
+                            if isinstance(records, list):
+                                queue_records, queue_read_ok = records, True
                     except ValueError:
                         pass
             except httpx.HTTPError:

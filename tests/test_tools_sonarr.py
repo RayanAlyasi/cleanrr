@@ -458,6 +458,57 @@ async def test_get_show_status_queue_malformed_json_still_returns_series(
 
 
 @pytest.mark.asyncio
+async def test_get_show_status_queue_records_not_list_reports_unread(
+    mock_sonarr_client: AsyncMock,
+    mock_overseerr_client: AsyncMock,
+    mock_identity: MagicMock,
+    settings: Settings,
+) -> None:
+    """A dict body with a non-list "records" is unread, not an empty queue."""
+    user_resp = MagicMock()
+    user_resp.status_code = 200
+    user_resp.json.return_value = {"results": [{"id": 7, "username": "alice"}]}
+
+    req_resp = MagicMock()
+    req_resp.status_code = 200
+    req_resp.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Fallback Test", "status": 5, "tvdbId": 222},
+            }
+        ]
+    }
+
+    series_resp = MagicMock()
+    series_resp.status_code = 200
+    series_resp.json.return_value = [
+        {
+            "id": 5,
+            "title": "Fallback Test",
+            "statistics": {"episodeCount": 20, "episodeFileCount": 10},
+        }
+    ]
+
+    queue_resp = MagicMock()
+    queue_resp.status_code = 200
+    queue_resp.json.return_value = {"records": {"a": 1}}
+
+    mock_overseerr_client.get.side_effect = [user_resp, req_resp]
+    mock_sonarr_client.get.side_effect = [series_resp, queue_resp]
+
+    tools = build_tools(
+        mock_sonarr_client, mock_overseerr_client, mock_identity, settings, telegram_user_id=1
+    )
+    get_show_status = tools[0]
+
+    result = await get_show_status.handler({"title": "Fallback Test"})
+    assert "Sonarr's queue didn't answer" in result["content"][0]["text"]
+    assert result["is_error"] is False
+
+
+@pytest.mark.asyncio
 async def test_get_show_status_queue_fetch_raises_still_returns_series(
     mock_sonarr_client: AsyncMock,
     mock_overseerr_client: AsyncMock,
