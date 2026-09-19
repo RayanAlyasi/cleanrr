@@ -229,7 +229,9 @@ async def test_stored_id_ownership_mismatch_is_unauthorized(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Regression: the comparison must use the resolved caller id, never the
-    argument Claude passed — this fails if that ever changes."""
+    argument Claude passed. request_id (99) equals the request's owner id
+    (99) here, while the stored caller id (42) does not — a comparison of
+    owner_id against the tool argument would wrongly authorize."""
     tool_calls_before = _tool_calls_value("remove_my_request", "unauthorized")
 
     mock_identity.get_linked_user = AsyncMock(
@@ -242,7 +244,7 @@ async def test_stored_id_ownership_mismatch_is_unauthorized(
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
 
-    result = await tool_fn.handler({"request_id": 7})
+    result = await tool_fn.handler({"request_id": 99})
 
     assert result["is_error"] is True
     assert "not your" in result["content"][0]["text"].lower()

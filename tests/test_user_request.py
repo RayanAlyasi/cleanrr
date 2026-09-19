@@ -71,6 +71,7 @@ async def test_resolve_user_id_success(mock_client: AsyncMock) -> None:
     user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
     assert user_id == 42
     assert label == "ok"
+    assert mock_client.get.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -244,6 +245,8 @@ async def test_resolve_user_id_single_non_matching_candidate_is_not_found(
 
 @pytest.mark.asyncio
 async def test_resolve_user_id_finds_exact_match_on_second_page(mock_client: AsyncMock) -> None:
+    """The second page completes the sweep (seen == total): a single match
+    that is the last thing left to see must still resolve, not keep paging."""
     page_one = MagicMock()
     page_one.status_code = 200
     page_one.json.return_value = {
@@ -253,8 +256,118 @@ async def test_resolve_user_id_finds_exact_match_on_second_page(mock_client: Asy
     page_two = MagicMock()
     page_two.status_code = 200
     page_two.json.return_value = {
-        "results": [{"id": 11, "username": "alice"}],
+        "results": [{"id": 11, "username": "alice"}]
+        + [{"id": i, "username": f"user{i}"} for i in range(100, 149)],
         "pageInfo": {"results": 150},
+    }
+    mock_client.get.side_effect = [page_one, page_two]
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    assert user_id == 11
+    assert label == "ok"
+    assert mock_client.get.await_count == 2
+    assert mock_client.get.await_args_list[1].kwargs["params"]["skip"] == 100
+
+
+@pytest.mark.parametrize(
+    "results",
+    [
+        [
+            {"id": 3, "username": "Dave Smith", "plexUsername": "dave"},
+            {"id": 10, "username": "dave"},
+        ],
+        [
+            {"id": 10, "username": "dave"},
+            {"id": 3, "username": "Dave Smith", "plexUsername": "dave"},
+        ],
+    ],
+)
+@pytest.mark.asyncio
+async def test_resolve_user_id_two_exact_matches_refuses_to_pick_one(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture, results: list[dict[str, object]]
+) -> None:
+    """Neither fork enforces uniqueness on username/plexUsername/jellyfinUsername
+    — two accounts matching the same name must never resolve to the lowest id."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {"results": results}
+    mock_client.get.return_value = resp
+
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "dave")
+
+    assert user_id is None
+    assert label == "user_not_found"
+    assert any("2 overseerr users match" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_same_id_matched_twice_resolves(mock_client: AsyncMock) -> None:
+    """The same account can match on more than one field or appear twice
+    across a sweep — that's one match, not an ambiguity."""
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "results": [
+            {"id": 3, "username": "dave"},
+            {"id": 3, "plexUsername": "dave"},
+        ]
+    }
+    mock_client.get.return_value = resp
+
+    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "dave")
+    assert user_id == 3
+    assert label == "ok"
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_second_match_on_second_page_refuses(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
+    """A single match no longer ends the sweep — a second match on a later
+    page must still be caught rather than binding the first one seen."""
+    page_one = MagicMock()
+    page_one.status_code = 200
+    page_one.json.return_value = {
+        "results": [{"id": 11, "username": "alice"}]
+        + [{"id": i, "username": f"user{i}"} for i in range(1, 100)],
+        "pageInfo": {"results": 150},
+    }
+    page_two = MagicMock()
+    page_two.status_code = 200
+    page_two.json.return_value = {
+        "results": [{"id": 130, "plexUsername": "alice"}]
+        + [{"id": i, "username": f"user{i}"} for i in range(100, 149)],
+        "pageInfo": {"results": 150},
+    }
+    mock_client.get.side_effect = [page_one, page_two]
+
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+
+    assert user_id is None
+    assert label == "user_not_found"
+    assert mock_client.get.await_count == 2
+    assert any("2 overseerr users match" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_resolve_user_id_single_match_survives_unmatched_second_page(
+    mock_client: AsyncMock,
+) -> None:
+    """A match found on page 1 must still resolve once the rest of the
+    sweep turns up no second match."""
+    page_one = MagicMock()
+    page_one.status_code = 200
+    page_one.json.return_value = {
+        "results": [{"id": 11, "username": "alice"}]
+        + [{"id": i, "username": f"user{i}"} for i in range(1, 100)],
+        "pageInfo": {"results": 150},
+    }
+    page_two = MagicMock()
+    page_two.status_code = 200
+    page_two.json.return_value = {
+        "results": [{"id": i, "username": f"user{i}"} for i in range(100, 150)],
     }
     mock_client.get.side_effect = [page_one, page_two]
 
@@ -289,7 +402,9 @@ async def test_resolve_user_id_short_page_advances_skip_by_rows_returned(
 
 
 @pytest.mark.asyncio
-async def test_resolve_user_id_sweep_stops_at_max_pages(mock_client: AsyncMock) -> None:
+async def test_resolve_user_id_sweep_stops_at_max_pages(
+    mock_client: AsyncMock, caplog: pytest.LogCaptureFixture
+) -> None:
     page = MagicMock()
     page.status_code = 200
     page.json.return_value = {
@@ -298,10 +413,13 @@ async def test_resolve_user_id_sweep_stops_at_max_pages(mock_client: AsyncMock) 
     }
     mock_client.get.return_value = page
 
-    user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+    with caplog.at_level(logging.WARNING):
+        user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
+
     assert user_id is None
     assert label == "user_not_found"
     assert mock_client.get.await_count == 5
+    assert any("overseerr user search stopped after" in record.message for record in caplog.records)
 
 
 @pytest.mark.asyncio
@@ -515,6 +633,26 @@ async def test_find_user_request_stored_id_404_is_user_not_found(
     mock_identity.record_overseerr_user_id.assert_not_awaited()
     assert mock_client.get.await_count == 1
     assert any("unknown upstream" in record.message for record in caplog.records)
+
+
+@pytest.mark.asyncio
+async def test_find_user_request_stored_id_connect_error_is_http_error(
+    mock_client: AsyncMock, mock_identity: MagicMock, settings: Settings
+) -> None:
+    """With a stored id, the requests-list fetch is the first HTTP call —
+    a transport error there must return http_error, never raise."""
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=7
+        )
+    )
+    mock_client.get.side_effect = httpx.ConnectError("boom")
+
+    result = await find_user_request(
+        mock_client, mock_identity, settings, "severance", telegram_user_id=1
+    )
+
+    assert result.status == "http_error"
 
 
 @pytest.mark.asyncio

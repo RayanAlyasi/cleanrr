@@ -226,6 +226,7 @@ async def _resolve_user_id(
     client: httpx.AsyncClient, base_url: str, username: str
 ) -> tuple[int | None, ResolveUserStatus]:
     target = username.casefold()
+    safe_username = "".join(c for c in username if c.isprintable())[:32]
 
     def _matches(user: object) -> bool:
         if not isinstance(user, dict):
@@ -237,7 +238,9 @@ async def _resolve_user_id(
         )
         return any(isinstance(c, str) and c.casefold() == target for c in candidates)
 
+    matched_ids: set[int] = set()
     seen = 0
+    total: int | None = None
     pages_fetched = 0
     while True:
         # Keep sending `q`: vanilla Overseerr ignores unknown query params,
@@ -268,16 +271,19 @@ async def _resolve_user_id(
         if not isinstance(users, list):
             return None, "parse_error"
 
-        # The result is persisted, so only an exact (case-insensitive) match
-        # on username/plexUsername/jellyfinUsername resolves — a substring
-        # `q` hit (Jellyseerr's `q` also matches email) or an unfiltered
-        # vanilla page must never bind the wrong account.
-        matched = next((u for u in users if _matches(u)), None)
-        if matched is not None:
-            user_id = matched.get("id") if isinstance(matched, dict) else None
-            if isinstance(user_id, int):
-                return user_id, "ok"
-            return None, "parse_error"
+        # The result is persisted, so only an exact (case-insensitive) and
+        # unambiguous match on username/plexUsername/jellyfinUsername
+        # resolves — a substring `q` hit (Jellyseerr's `q` also matches
+        # email), an unfiltered vanilla page, or two accounts sharing a
+        # name (neither fork enforces uniqueness on any of the three) must
+        # never bind the wrong account.
+        for u in users:
+            if not _matches(u):
+                continue
+            user_id = u.get("id") if isinstance(u, dict) else None
+            if not isinstance(user_id, int):
+                return None, "parse_error"
+            matched_ids.add(user_id)
 
         page_info = user_data.get("pageInfo")
         total = (
@@ -288,9 +294,31 @@ async def _resolve_user_id(
         seen += len(users)
 
         if not (
-            users and total is not None and seen < total and pages_fetched < _USER_SEARCH_MAX_PAGES
+            len(matched_ids) <= 1
+            and users
+            and total is not None
+            and seen < total
+            and pages_fetched < _USER_SEARCH_MAX_PAGES
         ):
-            return None, "user_not_found"
+            break
+
+    if len(matched_ids) > 1:
+        logger.warning(
+            "%d overseerr users match '%s' exactly; refusing to pick one",
+            len(matched_ids),
+            safe_username,
+        )
+        return None, "user_not_found"
+    if total is not None and seen < total:
+        logger.warning(
+            "overseerr user search stopped after %d of %d users; accounts beyond "
+            "that cannot be resolved",
+            seen,
+            total,
+        )
+    if matched_ids:
+        return next(iter(matched_ids)), "ok"
+    return None, "user_not_found"
 
 
 async def resolve_linked_user_id(
@@ -349,10 +377,13 @@ async def find_user_request(
     if user_id is None:
         return UserRequestLookup(status=resolve_status)
 
-    requests_resp = await overseerr_client.get(
-        f"{base_url}/api/v1/user/{user_id}/requests",
-        params={"take": _REQUEST_FETCH_LIMIT},
-    )
+    try:
+        requests_resp = await overseerr_client.get(
+            f"{base_url}/api/v1/user/{user_id}/requests",
+            params={"take": _REQUEST_FETCH_LIMIT},
+        )
+    except httpx.HTTPError:
+        return UserRequestLookup(status="http_error")
     if requests_resp.status_code == 404:
         logger.warning(
             "overseerr user id %s for telegram %s is unknown upstream; re-issue the link",
