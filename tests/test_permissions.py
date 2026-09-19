@@ -48,6 +48,10 @@ def _counter(tool: str, outcome: str) -> float:
     return cleanrr.metrics.destructive_actions_total.labels(tool=tool, outcome=outcome)._value.get()
 
 
+def _tool_calls_counter(tool: str, status: str) -> float:
+    return cleanrr.metrics.tool_calls_total.labels(tool=tool, status=status)._value.get()
+
+
 # ---------------------------------------------------------------------------
 # ConfirmationRegistry
 # ---------------------------------------------------------------------------
@@ -580,13 +584,101 @@ async def test_retired_denies_write_tool_without_reserving_or_sending() -> None:
         bot, reg, settings, formatters={}, telegram_user_id=42, is_retired=lambda: True
     )
 
-    before = _counter("remove_my_request", "denied")
+    before_tool_calls = _tool_calls_counter("remove_my_request", "reset")
+    before_destructive = _counter("remove_my_request", "denied")
     result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
     bot.send_message.assert_not_awaited()
     assert reg._entries == {}  # type: ignore[attr-defined]
+    assert _tool_calls_counter("remove_my_request", "reset") == before_tool_calls + 1
+    assert _counter("remove_my_request", "denied") == before_destructive
+
+
+@pytest.mark.asyncio
+async def test_reset_mid_send_cancels_the_prompt_once_registered() -> None:
+    """/reset can mark the Agent retired after the pre-check but while
+    send_message is still in flight — the prompt was never there for
+    cancel_for_user to cancel until register() runs, so the fix must catch
+    it there instead."""
+    bot = _make_bot()
+    retired_flag = [False]
+
+    async def _send_message(**_kwargs: object) -> MagicMock:
+        # Reset lands while this prompt is mid-send, before register() runs.
+        retired_flag[0] = True
+        sent = MagicMock()
+        sent.message_id = 999
+        return sent
+
+    bot.send_message = AsyncMock(side_effect=_send_message)
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    cb = make_can_use_tool(
+        bot,
+        reg,
+        settings,
+        formatters={},
+        telegram_user_id=42,
+        is_retired=lambda: retired_flag[0],
+    )
+
+    before = _counter("remove_my_request", "denied")
+    result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
+
+    assert isinstance(result, PermissionResultDeny)
+    bot.edit_message_text.assert_awaited_once_with(chat_id=42, message_id=999, text="Cancelled.")
     assert _counter("remove_my_request", "denied") == before + 1
+    assert await reg.has_pending_for_user(42) is False
+
+
+@pytest.mark.asyncio
+async def test_confirm_tap_after_reset_is_refused() -> None:
+    """A Confirm tap that resolves the future True after /reset ran must
+    still be refused — /reset only ever resolves a confirmation as denied,
+    so anything that reads allowed=True here came from the button, not reset."""
+    bot = _make_bot()
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    settings = _settings()
+    retired_flag = [False]
+    cb = make_can_use_tool(
+        bot,
+        reg,
+        settings,
+        formatters={},
+        telegram_user_id=42,
+        is_retired=lambda: retired_flag[0],
+    )
+
+    async def _confirm_then_retire() -> None:
+        for _ in range(50):
+            await asyncio.sleep(0.01)
+            async with reg._lock:  # type: ignore[attr-defined]
+                if reg._entries:  # type: ignore[attr-defined]
+                    cid = next(iter(reg._entries))  # type: ignore[attr-defined]
+                    break
+        else:
+            raise AssertionError("no pending confirmation appeared")
+        # /reset marks the Agent retired first, then the Confirm tap still
+        # resolves the future True — can_use_tool must catch this after the
+        # wait_for, not rely on the tap itself knowing about the reset.
+        retired_flag[0] = True
+        await reg.resolve(cid, telegram_user_id=42, allowed=True)
+
+    before_tool_calls = _tool_calls_counter("remove_my_request", "reset")
+    before_confirmed = _counter("remove_my_request", "confirmed")
+
+    results = await asyncio.gather(
+        cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock()),
+        _confirm_then_retire(),
+    )
+
+    result = results[0]
+    assert isinstance(result, PermissionResultDeny)
+    assert result.message == "the user reset this conversation"
+    assert _tool_calls_counter("remove_my_request", "reset") == before_tool_calls + 1
+    assert _counter("remove_my_request", "confirmed") == before_confirmed + 1
+    bot.edit_message_text.assert_awaited_once_with(chat_id=42, message_id=999, text="Cancelled.")
 
 
 @pytest.mark.asyncio

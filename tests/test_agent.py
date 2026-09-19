@@ -1078,6 +1078,44 @@ async def test_respond_reconnects_once_after_sdk_connection_error() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reconnect_stop_runs_to_completion_past_timeout_seconds() -> None:
+    """stop() inside the reconnect must never be cancelled by the reconnect's
+    own timeout_seconds wait_for — a raw asyncio cancellation delivered mid-close
+    skips the SDK's terminate/kill escalation and orphans the CLI child."""
+    from claude_agent_sdk import ClaudeSDKError
+
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.05,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock(side_effect=ClaudeSDKError("boom"))
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+
+    stop_completed = False
+
+    async def _stop() -> None:
+        nonlocal stop_completed
+        await asyncio.sleep(0.2)
+        stop_completed = True
+
+    agent.stop = AsyncMock(side_effect=_stop)  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(ClaudeSDKError):
+        await agent.respond(prompt="hello")
+
+    assert stop_completed is True
+    agent.stop.assert_awaited_once()
+    assert agent._lock.locked() is False
+
+
+@pytest.mark.asyncio
 async def test_respond_propagates_when_reconnect_also_fails() -> None:
     """If the reconnect itself can't recover the session, the failure must
     still surface (handlers.py's generic except turns it into a graceful
@@ -1434,6 +1472,19 @@ async def test_respond_on_retired_agent_with_no_client_raises_agent_retired() ->
     with pytest.raises(AgentRetired):
         await agent.respond(prompt="hello")
 
+    assert agent._lock.locked() is False
+
+
+def test_max_lock_hold_seconds_at_default_timeout() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=120.0,
+    )
+    assert agent._max_lock_hold_seconds() == 440.0
+
 
 @pytest.mark.asyncio
 async def test_retire_on_idle_agent_awaits_stop_once_and_releases_lock() -> None:
@@ -1553,6 +1604,65 @@ def test_idle_seconds_and_touch() -> None:
     assert agent.idle_seconds >= 100
 
     agent.touch()
+
+    assert agent.idle_seconds < 1
+
+
+@pytest.mark.asyncio
+async def test_respond_touches_idle_clock_on_success() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=5.0,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    mock_client.receive_response = lambda: _fast_generator("hello back")
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent._last_active_at = time.monotonic() - 100
+
+    result = await agent.respond(prompt="hello")
+
+    assert result == "hello back"
+    assert agent.idle_seconds < 1
+
+
+@pytest.mark.asyncio
+async def test_respond_touches_idle_clock_on_error_path() -> None:
+    agent = Agent(
+        identity=MagicMock(spec=Identity),
+        settings=Settings(
+            telegram_bot_token=SecretStr("test"), anthropic_api_key=SecretStr("sk-test")
+        ),
+        timeout_seconds=0.1,
+    )
+    mock_client = AsyncMock()
+    mock_client.query = AsyncMock()
+    call_count = 0
+
+    def _receive_response() -> AsyncIterator[AssistantMessage]:
+        nonlocal call_count
+        call_count += 1
+        # First call hangs (the abandoned turn); the recovery drain terminates.
+        return _slow_generator() if call_count == 1 else _empty_generator()
+
+    mock_client.receive_response = _receive_response
+
+    agent._client = mock_client
+    agent._telegram_user_id = 1
+    agent._last_active_at = time.monotonic() - 100
+    # The drain terminates on its own here, so recovery never falls back to
+    # stop/start — stub them anyway so a future drain regression fails
+    # cleanly instead of spawning a real CLI subprocess in this unit test.
+    agent.stop = AsyncMock()  # type: ignore[method-assign]
+    agent.start = AsyncMock()  # type: ignore[method-assign]
+
+    with pytest.raises(TimeoutError):
+        await agent.respond(prompt="hello")
 
     assert agent.idle_seconds < 1
 

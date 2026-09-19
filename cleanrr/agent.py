@@ -43,9 +43,10 @@ logger = logging.getLogger(__name__)
 
 # _TIMEOUT_RESTART_SECONDS exceeds the SDK's own 60s initialize floor
 # (ClaudeSDKClient.connect), so a slow-but-valid start() isn't cancelled.
-# Worst case a timeout holds the lock for drain + stop() + start() =
-# 10 + 20 + 75 = 105s, which must stay under claude_timeout_seconds
-# (default 120s) since a queued respond() waits on the lock that long.
+# _max_lock_hold_seconds() below is the single statement of the worst-case
+# lock hold; a queued respond() bounds its own lock wait at timeout_seconds
+# (see the wait_for(self._lock.acquire(), ...) in respond()) and gets a
+# graceful TimeoutError when the hold is longer.
 # A client left None by a previous failed restart adds one further bounded
 # start() (75s) before the turn's own wait_for even begins, so a caller
 # queued behind that turn can exceed claude_timeout_seconds on the lock
@@ -395,15 +396,15 @@ class Agent:
 
     def _max_lock_hold_seconds(self) -> float:
         # Worst case one respond() can hold the lock: a rebuild for a client a
-        # previous failure left None (75) + the turn (timeout_seconds) + one
-        # reconnect retry (timeout_seconds) + post-timeout recovery (drain 10
-        # + close 20 + start 75) = 420s at defaults.
+        # previous failure left None (75) + the turn (timeout_seconds) +
+        # reconnect close (20) + reconnect retry (timeout_seconds) +
+        # post-timeout recovery (drain 10 + close 20 + start 75) = 440s at
+        # the default claude_timeout_seconds=120.0.
         return (
-            _TIMEOUT_RESTART_SECONDS
+            2 * _TIMEOUT_RESTART_SECONDS
             + 2 * self._timeout_seconds
             + _TIMEOUT_RECOVERY_SECONDS
-            + _SDK_CLOSE_SECONDS
-            + _TIMEOUT_RESTART_SECONDS
+            + 2 * _SDK_CLOSE_SECONDS
         )
 
     async def retire(self) -> None:
@@ -506,8 +507,11 @@ class Agent:
                     # caller gets the same graceful "couldn't reach Claude" reply.
                     logger.exception("SDK connection lost mid-query — reconnecting")
 
+                    # Not wrapped: the SDK's close() escalation must run to
+                    # completion or the CLI child is orphaned as <defunct>.
+                    await self.stop()
+
                     async def _reconnect_and_retry() -> str:
-                        await self.stop()
                         await self.start(telegram_user_id)
                         return await _query()
 
@@ -528,4 +532,8 @@ class Agent:
                     logger.exception("post-timeout recovery failed; the client may be unusable")
                 raise
         finally:
+            # touch() before release(), no await between: idle is measured
+            # from the end of this turn, not a stale value a sweeper could
+            # catch between release() and a parked waiter's resume.
+            self.touch()
             self._lock.release()
