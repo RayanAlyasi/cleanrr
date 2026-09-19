@@ -122,6 +122,7 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | `CLAUDE_TIMEOUT_SECONDS` | `120` | Wall-clock seconds before giving up on a single Claude response. Must exceed `CONFIRMATION_TTL_SECONDS`. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
+| `AGENT_IDLE_TIMEOUT_MINUTES` | `30` | Stop a user's Claude subprocess after this many minutes idle; their next message starts a fresh conversation. `0` keeps subprocesses until restart. |
 
 ### Docker compose interpolation
 

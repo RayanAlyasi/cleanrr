@@ -58,6 +58,19 @@ destructive_actions_total = Counter(
     ["tool", "outcome"],
 )
 
+agent_pool_agents = Gauge(
+    "cleanrr_agent_pool_agents",
+    "Agents in the pool right now, one Claude CLI subprocess each",
+)
+
+agent_evictions_total = Counter(
+    "cleanrr_agent_evictions_total",
+    # Allowed reason values: idle | reset (see agent_pool.EvictionReason).
+    # Shutdown stops every Agent but is not an eviction and is not counted here.
+    "Agents removed from the pool before shutdown, by reason",
+    ["reason"],
+)
+
 
 def start(port: int, addr: str = "127.0.0.1") -> None:
     up.set(1)
