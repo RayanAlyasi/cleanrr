@@ -138,12 +138,12 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
             "Sorry — I couldn't reach Claude just now. Try again in a moment."
         )
         return
-    metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
 
     if reply is None:
         metrics.claude_requests_total.labels(status="at_capacity").inc()
         await update.message.reply_text(_AT_CAPACITY_REPLY)
         return
+    metrics.claude_request_duration_seconds.observe(time.perf_counter() - start)
 
     text = reply or "(no reply)"
     if len(text) > _TELEGRAM_MAX_REPLY_CHARS:
@@ -322,17 +322,18 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     # Load-bearing order: reset() marks the Agent retired before this cancel
     # runs, so can_use_tool refuses any destructive call the retired Agent's
     # still-finishing turn might try, and the cancel can't race a fresh prompt.
-    dropped = await pool.reset(user.id)
+    outcome = await pool.reset(user.id)
     cancelled = await registry.cancel_for_user(user.id)
 
     sentences = []
     if cancelled:
         sentences.append("Cancelled the confirmation you had waiting — nothing was run.")
-    sentences.append(
-        "Fresh start — your next message begins a new conversation."
-        if dropped
-        else "Nothing to reset — your next message begins a new conversation."
-    )
+    if outcome == "dropped":
+        sentences.append("Fresh start — your next message begins a new conversation.")
+    elif outcome == "nothing":
+        sentences.append("Nothing to reset — your next message begins a new conversation.")
+    else:
+        sentences.append("Still finishing your last reset — give it a moment, then try again.")
     await update.message.reply_text(" ".join(sentences))
 
 

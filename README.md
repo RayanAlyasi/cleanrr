@@ -43,7 +43,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 | `/start` | Anyone | Sanity check; bot confirms it's online. |
 | `/help` | Anyone | List the commands available. |
 | `/link <code>` | Anyone | Redeem a one-time code to bind your Telegram account to an Overseerr user. |
-| `/reset` | Linked users | Forget the current conversation and start fresh; also cancels any confirmation you have waiting. |
+| `/reset` | Linked users + admins | Forget the current conversation and start fresh; also cancels any confirmation you have waiting. |
 | `/invite <overseerr_username>` | Admin only | Issue a one-time link code for a friend. Requires `ADMIN_TELEGRAM_IDS` set. |
 
 ## Destructive actions
@@ -123,7 +123,7 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | `CLAUDE_TIMEOUT_SECONDS` | `120` | Wall-clock seconds before giving up on a single Claude response. Must exceed `CONFIRMATION_TTL_SECONDS`. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
-| `AGENT_IDLE_TIMEOUT_MINUTES` | `30` | Stop a user's Claude subprocess after this many minutes idle; their next message starts a fresh conversation. `0` keeps subprocesses until restart. |
+| `AGENT_IDLE_TIMEOUT_MINUTES` | `30` | Stop a user's Claude subprocess after this many minutes idle; their next message starts a fresh conversation. `0` keeps subprocesses until restart; capped at `1440` (a day). |
 
 ### Docker compose interpolation
 

@@ -337,13 +337,18 @@ async def test_reset_detaches_and_increments_counter_once() -> None:
 
         before = metrics.agent_evictions_total.labels(reason="reset")._value.get()  # type: ignore[attr-defined]
         result = await pool.reset(1)
-        assert result is True
+        assert result == "dropped"
         assert 1 not in pool._agents
         after_first = metrics.agent_evictions_total.labels(reason="reset")._value.get()  # type: ignore[attr-defined]
         assert after_first == before + 1
 
+        # The retirement task the reset above spawned is only scheduled, not
+        # yet run (no real await has yielded to the event loop) — await it so
+        # the next reset() reads "no retiring agent" rather than "retiring".
+        await asyncio.gather(*pool._retiring)
+
         result_again = await pool.reset(1)
-        assert result_again is False
+        assert result_again == "nothing"
         after_second = metrics.agent_evictions_total.labels(reason="reset")._value.get()  # type: ignore[attr-defined]
         assert after_second == after_first
 
@@ -352,6 +357,101 @@ async def test_reset_detaches_and_increments_counter_once() -> None:
         assert second is not first
 
     await asyncio.gather(*pool._retiring)
+
+
+@pytest.mark.asyncio
+async def test_reset_returns_retiring_while_previous_agent_still_stopping() -> None:
+    pool = _make_pool()
+    fake_agent_cls = _fake_agent_class()
+    park = asyncio.Event()
+
+    async def _parked_retire() -> None:
+        await park.wait()
+
+    with patch("cleanrr.agent_pool.Agent", fake_agent_cls):
+        first = _mock_agent(await pool.get_or_create(1))
+        first.retire.side_effect = _parked_retire
+
+        before = metrics.agent_evictions_total.labels(reason="reset")._value.get()  # type: ignore[attr-defined]
+        first_result = await pool.reset(1)
+        assert first_result == "dropped"
+
+        second = await pool.get_or_create(1)
+        assert second is not None
+        assert second is not first
+
+        second_result = await pool.reset(1)
+        assert second_result == "retiring"
+        assert 1 in pool._agents
+        after = metrics.agent_evictions_total.labels(reason="reset")._value.get()  # type: ignore[attr-defined]
+        assert after == before + 1
+
+        [retiring_task] = list(pool._retiring)
+        park.set()
+        await retiring_task
+
+        third_result = await pool.reset(1)
+        assert third_result == "dropped"
+
+    await asyncio.gather(*pool._retiring)
+
+
+@pytest.mark.asyncio
+async def test_one_user_cannot_exceed_two_pool_slots() -> None:
+    pool = _make_pool()
+    fake_agent_cls = _fake_agent_class()
+    park = asyncio.Event()
+
+    async def _parked_retire() -> None:
+        await park.wait()
+
+    with patch("cleanrr.agent_pool.Agent", fake_agent_cls):
+        first = _mock_agent(await pool.get_or_create(1))
+        first.retire.side_effect = _parked_retire
+
+        for _ in range(5):
+            await pool.reset(1)
+            await pool.get_or_create(1)
+            assert len(pool._agents) + len(pool._retiring) == 2
+
+    park.set()
+    await asyncio.gather(*pool._retiring)
+
+
+def test_idle_timeout_seconds_converts_minutes_to_seconds() -> None:
+    pool = _make_pool_with_idle_timeout(30)
+    assert pool._idle_timeout_seconds == 1800.0
+
+
+@pytest.mark.asyncio
+async def test_sweep_loop_logs_and_continues_when_sweep_once_raises_once(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """An unexpected exception inside one sweep pass must be logged, not
+    silently kill the background sweeper task."""
+    pool = _make_pool()
+    pool._idle_timeout_seconds = 0.1
+
+    call_count = 0
+    original = pool._sweep_once
+
+    async def _flaky_sweep_once() -> None:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            raise RuntimeError("boom")
+        await original()
+
+    monkeypatch.setattr(pool, "_sweep_once", _flaky_sweep_once)
+
+    await pool.start()
+    for _ in range(80):
+        if call_count >= 2:
+            break
+        await asyncio.sleep(0.05)
+    await pool.stop()
+
+    assert call_count >= 2
 
 
 @pytest.mark.asyncio

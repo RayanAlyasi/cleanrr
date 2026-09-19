@@ -111,6 +111,10 @@ def _counter_value(label_values: dict[str, str]) -> float:
     return metrics.claude_requests_total.labels(**label_values)._value.get()
 
 
+def _duration_sample_count() -> float:
+    return sum(bucket.get() for bucket in metrics.claude_request_duration_seconds._buckets)  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # on_message
 # ---------------------------------------------------------------------------
@@ -709,7 +713,7 @@ async def test_cmd_reset_no_effective_user() -> None:
 @pytest.mark.asyncio
 async def test_cmd_reset_increments_command_metric() -> None:
     pool = MagicMock()
-    pool.reset = AsyncMock(return_value=False)
+    pool.reset = AsyncMock(return_value="nothing")
     registry = MagicMock()
     registry.cancel_for_user = AsyncMock(return_value=0)
     update = _make_update("", user_id=1)
@@ -747,27 +751,38 @@ async def test_cmd_reset_refuses_unlinked_non_admin() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    ("dropped", "cancelled", "expected"),
+    ("outcome", "cancelled", "expected"),
     [
-        (True, 0, "Fresh start — your next message begins a new conversation."),
+        ("dropped", 0, "Fresh start — your next message begins a new conversation."),
         (
-            True,
+            "dropped",
             1,
             "Cancelled the confirmation you had waiting — nothing was run. "
             "Fresh start — your next message begins a new conversation.",
         ),
-        (False, 0, "Nothing to reset — your next message begins a new conversation."),
+        ("nothing", 0, "Nothing to reset — your next message begins a new conversation."),
         (
-            False,
+            "nothing",
             2,
             "Cancelled the confirmation you had waiting — nothing was run. "
             "Nothing to reset — your next message begins a new conversation.",
         ),
+        (
+            "retiring",
+            0,
+            "Still finishing your last reset — give it a moment, then try again.",
+        ),
+        (
+            "retiring",
+            1,
+            "Cancelled the confirmation you had waiting — nothing was run. "
+            "Still finishing your last reset — give it a moment, then try again.",
+        ),
     ],
 )
-async def test_cmd_reset_reply_table(dropped: bool, cancelled: int, expected: str) -> None:
+async def test_cmd_reset_reply_table(outcome: str, cancelled: int, expected: str) -> None:
     pool = MagicMock()
-    pool.reset = AsyncMock(return_value=dropped)
+    pool.reset = AsyncMock(return_value=outcome)
     registry = MagicMock()
     registry.cancel_for_user = AsyncMock(return_value=cancelled)
     update = _make_update("", user_id=1)
@@ -787,7 +802,7 @@ async def test_cmd_reset_resets_pool_before_cancelling_confirmations() -> None:
     runs, so can_use_tool refuses any destructive call the retired Agent's
     still-finishing turn might try, and the cancel can't race a fresh prompt."""
     pool = MagicMock()
-    pool.reset = AsyncMock(return_value=True)
+    pool.reset = AsyncMock(return_value="dropped")
     registry = MagicMock()
     registry.cancel_for_user = AsyncMock(return_value=1)
     update = _make_update("", user_id=7)

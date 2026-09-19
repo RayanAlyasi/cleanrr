@@ -20,7 +20,9 @@ logger = logging.getLogger(__name__)
 # Mirrors ConfirmationRegistry._REGISTRY_MAX_ENTRIES' role: a small, fixed cap
 # on concurrent per-user Agent subprocesses. Sized for a homelab's friends-
 # and-family user base, not a multi-tenant service. Counts Agents that are
-# still stopping too, because their subprocess is alive for up to 20s.
+# still stopping too — a retiring Agent's subprocess is alive until its
+# in-flight turn ends (bounded by Agent._max_lock_hold_seconds()) plus the
+# ~20s close.
 _POOL_MAX_AGENTS = 15
 
 # Single source of truth for the agent_evictions_total{reason=...} label.
@@ -28,6 +30,10 @@ _POOL_MAX_AGENTS = 15
 # the metric with a value outside this literal will silently inflate
 # cardinality.
 EvictionReason = Literal["idle", "reset"]
+
+# reset()'s own return vocabulary: "retiring" means the user's previous
+# Agent is still stopping, not that this call detached anything.
+ResetOutcome = Literal["dropped", "nothing", "retiring"]
 
 # One close() is ~20s; retirement tasks are waited on rather than cancelled
 # because the SDK's close() must not be cancelled (see Agent.stop()).
@@ -70,7 +76,9 @@ class AgentPool:
         self._confirmation_registry = confirmation_registry
         self._agents: dict[int, Agent] = {}
         self._lock = asyncio.Lock()
-        self._retiring: set[asyncio.Task[None]] = set()
+        # Maps a retirement task to the user it is retiring, so reset() can
+        # tell "still stopping this user's Agent" apart from "at capacity."
+        self._retiring: dict[asyncio.Task[None], int] = {}
         self._sweeper_task: asyncio.Task[None] | None = None
         self._idle_timeout_seconds = float(settings.agent_idle_timeout_minutes) * 60
 
@@ -126,8 +134,8 @@ class AgentPool:
         logger.info("evicting user %s's agent (reason=%s)", telegram_user_id, reason)
         # No await here: the pool lock is never held across a stop.
         task = asyncio.create_task(self._retire(agent))
-        self._retiring.add(task)
-        task.add_done_callback(self._retiring.discard)
+        self._retiring[task] = telegram_user_id
+        task.add_done_callback(lambda _: self._retiring.pop(task, None))
 
     async def _retire(self, agent: Agent) -> None:
         try:
@@ -135,13 +143,19 @@ class AgentPool:
         except Exception:
             logger.exception("stopping a retired agent failed")
 
-    async def reset(self, telegram_user_id: int) -> bool:
+    async def reset(self, telegram_user_id: int) -> ResetOutcome:
+        # Bound: one retiring Agent plus one live Agent per user, so a user
+        # holds at most two pool slots and runs at most two turns at once —
+        # the second is the message the brief promises a fresh Agent to
+        # while the old one stops.
         async with self._lock:
+            if telegram_user_id in self._retiring.values():
+                return "retiring"
             agent = self._agents.get(telegram_user_id)
             if agent is None:
-                return False
+                return "nothing"
             self._detach_locked(telegram_user_id, agent, "reset")
-            return True
+            return "dropped"
 
     async def _sweep_once(self) -> None:
         # The pool lock is taken before the registry lock, never the other
@@ -168,18 +182,22 @@ class AgentPool:
                         telegram_user_id,
                     )
                     continue
-                # Load-bearing, not defensive noise: the registry await above
-                # yields, and a handler already parked on this Agent's own
-                # lock (respond() waits on Agent._lock with no pool lock —
-                # agent.py:419) can acquire it during that yield, because
-                # asyncio.Lock.release() clears locked() before the waiter is
-                # scheduled. Without this re-check, a second message queued
-                # behind a turn longer than the idle window would be detached
-                # mid-turn and run retired, so can_use_tool refuses its
-                # destructive tools with "the user reset this conversation"
-                # when nobody reset. Nothing may await between here and
-                # _detach_locked — mark_retired() and the del are both
-                # synchronous.
+                # touch() immediately before Agent.respond() releases its
+                # lock is what closes the release-to-resume window: an Agent
+                # whose turn just ended reads idle_seconds == 0 and is never
+                # in the `idle` list built above. This re-check instead
+                # covers a turn that acquired the freed lock during the
+                # registry await just above — a handler already parked on
+                # this Agent's own lock (respond() waits on Agent._lock with
+                # no pool lock — agent.py:419) can acquire it during that
+                # yield, because asyncio.Lock.release() clears locked()
+                # before the waiter is scheduled. Without this re-check, a
+                # second message queued behind a turn longer than the idle
+                # window would be detached mid-turn and run retired, so
+                # can_use_tool refuses its destructive tools with "the user
+                # reset this conversation" when nobody reset. Nothing may
+                # await between here and _detach_locked — mark_retired() and
+                # the del are both synchronous.
                 if agent.is_busy:
                     logger.debug(
                         "skipping idle eviction for user %s: became busy",
