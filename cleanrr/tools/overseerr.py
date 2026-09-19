@@ -13,10 +13,10 @@ from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
 from cleanrr.tools._user_request import (
     _REQUEST_FETCH_LIMIT,
-    _resolve_user_id,
     enrich_titles_with_names,
     find_user_request,
     render_lookup_error,
+    resolve_linked_user_id,
 )
 
 if TYPE_CHECKING:
@@ -71,8 +71,8 @@ def build_tools(
                 is_error=True,
             )
 
-        overseerr_username = await identity.get_link(telegram_user_id)
-        if overseerr_username is None:
+        link = await identity.get_linked_user(telegram_user_id)
+        if link is None:
             metrics.tool_calls_total.labels(tool="list_my_requests", status="unlinked_user").inc()
             return text_result(
                 "You haven't linked your Overseerr account yet. Send /link <code> "
@@ -82,7 +82,7 @@ def build_tools(
 
         try:
             base_url = str(settings.overseerr_url).rstrip("/")
-            user_id, resolve_status = await _resolve_user_id(client, base_url, overseerr_username)
+            user_id, resolve_status = await resolve_linked_user_id(client, identity, base_url, link)
             if user_id is None:
                 return _user_id_error_response("list_my_requests", resolve_status)
 
@@ -90,6 +90,13 @@ def build_tools(
                 f"{base_url}/api/v1/user/{user_id}/requests",
                 params={"take": _REQUEST_FETCH_LIMIT},
             )
+            if requests_resp.status_code == 404:
+                logger.warning(
+                    "overseerr user id %s for telegram %s is unknown upstream; re-issue the link",
+                    user_id,
+                    telegram_user_id,
+                )
+                return _user_id_error_response("list_my_requests", "user_not_found")
             if requests_resp.status_code != 200:
                 metrics.tool_calls_total.labels(tool="list_my_requests", status="http_error").inc()
                 return text_result(

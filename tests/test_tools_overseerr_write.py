@@ -7,7 +7,7 @@ import pytest
 
 import cleanrr.metrics
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools.overseerr_write import build_tools
 
 
@@ -25,7 +25,14 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def mock_identity() -> MagicMock:
-    return MagicMock(spec=Identity)
+    ident = MagicMock(spec=Identity)
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
+    return ident
 
 
 @pytest.fixture
@@ -41,7 +48,7 @@ def settings() -> Settings:
 def _user_search_response(user_id: int = 42) -> MagicMock:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": user_id}]}
+    resp.json.return_value = {"results": [{"id": user_id, "username": "alice"}]}
     return resp
 
 
@@ -77,7 +84,6 @@ def _destructive_value(tool: str, outcome: str) -> float:
 async def test_happy_path_deletes_owned_request(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(owner_id=42, title="Dune"),
@@ -97,10 +103,32 @@ async def test_happy_path_deletes_owned_request(
 
 
 @pytest.mark.asyncio
+async def test_stored_id_owned_request_succeeds_without_user_search(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=123, overseerr_username="alice", linked_at=1000, overseerr_user_id=42
+        )
+    )
+    mock_client.get.return_value = _request_get_response(owner_id=42, title="Dune")
+    mock_client.delete.return_value = _delete_response(204)
+
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
+    tool_fn = tools[0]
+
+    result = await tool_fn.handler({"request_id": 7})
+
+    assert result["is_error"] is False
+    assert "Dune" in result["content"][0]["text"]
+    mock_client.get.assert_awaited_once()
+    mock_client.delete.assert_awaited_once()
+
+
+@pytest.mark.asyncio
 async def test_happy_path_falls_back_when_media_is_not_a_dict(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     weird_media_response = MagicMock()
     weird_media_response.status_code = 200
     weird_media_response.json.return_value = {
@@ -126,7 +154,6 @@ async def test_happy_path_resolves_title_from_real_overseerr_shape(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Real Overseerr requests carry only tmdbId, never a title/name."""
-    mock_identity.get_link = AsyncMock(return_value="alice")
     request_response = MagicMock()
     request_response.status_code = 200
     request_response.json.return_value = {
@@ -159,7 +186,7 @@ async def test_happy_path_resolves_title_from_real_overseerr_shape(
 async def test_unlinked_user_returns_error_without_http_calls(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
 
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]
@@ -178,7 +205,6 @@ async def test_ownership_mismatch_increments_unauthorized_metric_and_skips_delet
     tool_calls_before = _tool_calls_value("remove_my_request", "unauthorized")
     destructive_before = _destructive_value("remove_my_request", "unauthorized")
 
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(owner_id=99, title="Someone else's"),
@@ -199,10 +225,37 @@ async def test_ownership_mismatch_increments_unauthorized_metric_and_skips_delet
 
 
 @pytest.mark.asyncio
+async def test_stored_id_ownership_mismatch_is_unauthorized(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """Regression: the comparison must use the resolved caller id, never the
+    argument Claude passed. request_id (99) equals the request's owner id
+    (99) here, while the stored caller id (42) does not — a comparison of
+    owner_id against the tool argument would wrongly authorize."""
+    tool_calls_before = _tool_calls_value("remove_my_request", "unauthorized")
+
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=123, overseerr_username="alice", linked_at=1000, overseerr_user_id=42
+        )
+    )
+    mock_client.get.return_value = _request_get_response(owner_id=99, title="Someone else's")
+
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=123)
+    tool_fn = tools[0]
+
+    result = await tool_fn.handler({"request_id": 99})
+
+    assert result["is_error"] is True
+    assert "not your" in result["content"][0]["text"].lower()
+    mock_client.delete.assert_not_called()
+    assert _tool_calls_value("remove_my_request", "unauthorized") == tool_calls_before + 1
+
+
+@pytest.mark.asyncio
 async def test_get_404_is_idempotent_success(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(status_code=404),
@@ -222,7 +275,6 @@ async def test_get_404_is_idempotent_success(
 async def test_delete_404_is_idempotent_success(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(owner_id=42),
@@ -242,7 +294,6 @@ async def test_delete_404_is_idempotent_success(
 async def test_delete_500_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(owner_id=42),
@@ -289,7 +340,6 @@ async def test_bad_request_id_returns_error(
 async def test_user_resolve_404_returns_friendly_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_search_404 = MagicMock()
     user_search_404.status_code = 404
     mock_client.get.return_value = user_search_404
@@ -307,7 +357,6 @@ async def test_user_resolve_404_returns_friendly_error(
 async def test_user_resolve_5xx_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     user_search_500 = MagicMock()
     user_search_500.status_code = 500
     mock_client.get.return_value = user_search_500
@@ -325,7 +374,6 @@ async def test_user_resolve_5xx_returns_error(
 async def test_get_http_error_returns_friendly_message(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         httpx.RequestError("boom"),
@@ -344,7 +392,6 @@ async def test_get_http_error_returns_friendly_message(
 async def test_get_5xx_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     bad_resp = MagicMock()
     bad_resp.status_code = 500
     mock_client.get.side_effect = [_user_search_response(user_id=42), bad_resp]
@@ -362,7 +409,6 @@ async def test_get_5xx_returns_error(
 async def test_get_malformed_json_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     bad_json = MagicMock()
     bad_json.status_code = 200
     bad_json.json.side_effect = ValueError("bad json")
@@ -381,7 +427,6 @@ async def test_get_malformed_json_returns_error(
 async def test_get_non_dict_json_returns_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     non_dict_json = MagicMock()
     non_dict_json.status_code = 200
     non_dict_json.json.return_value = ["not", "a", "dict"]
@@ -401,7 +446,6 @@ async def test_get_non_dict_json_returns_error(
 async def test_delete_http_error_returns_friendly_message(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="alice")
     mock_client.get.side_effect = [
         _user_search_response(user_id=42),
         _request_get_response(owner_id=42),

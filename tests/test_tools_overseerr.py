@@ -5,8 +5,9 @@ from unittest.mock import AsyncMock, MagicMock
 import httpx
 import pytest
 
+import cleanrr.metrics
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools._status_label import _format_status_label
 from cleanrr.tools._user_request import _resolve_user_id
 from cleanrr.tools.overseerr import build_tools
@@ -24,7 +25,21 @@ def _settings(**overrides: object) -> Settings:
 
 @pytest.fixture
 def mock_identity() -> MagicMock:
-    return MagicMock(spec=Identity)
+    ident = MagicMock(spec=Identity)
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1,
+            overseerr_username="testuser",
+            linked_at=1000,
+            overseerr_user_id=None,
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
+    return ident
+
+
+def _tool_calls_value(tool: str, status: str) -> float:
+    return cleanrr.metrics.tool_calls_total.labels(tool=tool, status=status)._value.get()
 
 
 @pytest.fixture
@@ -50,7 +65,7 @@ def settings() -> Settings:
 async def test_resolve_user_id_success(mock_client: AsyncMock) -> None:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": 42}]}
+    resp.json.return_value = {"results": [{"id": 42, "username": "alice"}]}
     mock_client.get.return_value = resp
 
     user_id, label = await _resolve_user_id(mock_client, "http://overseerr:5055", "alice")
@@ -163,7 +178,7 @@ async def test_list_my_requests_unlinked_user(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Tool returns 'you haven't linked' when user has no mapping."""
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = tools[0]
 
@@ -176,8 +191,10 @@ async def test_list_my_requests_unlinked_user(
 async def test_list_my_requests_user_search_404(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    """Tool handles 404 on user search gracefully."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
+    """Tool handles 404 on user search gracefully — no stored id, so the
+    fallback resolves by username, and that resolution 404s."""
+    before = _tool_calls_value("list_my_requests", "user_not_found")
+
     user_response = MagicMock()
     user_response.status_code = 404
     mock_client.get.return_value = user_response
@@ -188,6 +205,67 @@ async def test_list_my_requests_user_search_404(
     result = await tool_fn.handler({})
     assert result["is_error"] is False
     assert "couldn't find" in result["content"][0]["text"].lower()
+    assert _tool_calls_value("list_my_requests", "user_not_found") == before + 1
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_stored_id_skips_user_search(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1,
+            overseerr_username="testuser",
+            linked_at=1000,
+            overseerr_user_id=7,
+        )
+    )
+    requests_response = MagicMock()
+    requests_response.status_code = 200
+    requests_response.json.return_value = {"results": []}
+    mock_client.get.return_value = requests_response
+
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
+    tool_fn = tools[0]
+
+    result = await tool_fn.handler({})
+
+    assert result["is_error"] is False
+    assert mock_client.get.await_count == 1
+    assert (
+        mock_client.get.await_args_list[0].args[0] == "http://overseerr:5055/api/v1/user/7/requests"
+    )
+    mock_identity.record_overseerr_user_id.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_list_my_requests_stored_id_404_is_user_not_found(
+    mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
+) -> None:
+    """The memo's 'never fall back when a stored id 404s' guard."""
+    before = _tool_calls_value("list_my_requests", "user_not_found")
+
+    mock_identity.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=1,
+            overseerr_username="testuser",
+            linked_at=1000,
+            overseerr_user_id=7,
+        )
+    )
+    requests_response = MagicMock()
+    requests_response.status_code = 404
+    mock_client.get.return_value = requests_response
+
+    tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
+    tool_fn = tools[0]
+
+    result = await tool_fn.handler({})
+
+    assert result["is_error"] is False
+    assert "couldn't find your overseerr account" in result["content"][0]["text"].lower()
+    assert mock_client.get.await_count == 1
+    assert _tool_calls_value("list_my_requests", "user_not_found") == before + 1
 
 
 @pytest.mark.asyncio
@@ -195,7 +273,6 @@ async def test_list_my_requests_user_search_500(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Tool handles HTTP 500 on user search."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 500
     mock_client.get.return_value = user_response
@@ -213,11 +290,9 @@ async def test_list_my_requests_empty(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Tool returns 'nothing requested' when user has zero requests."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -238,8 +313,6 @@ async def test_list_my_requests_parse_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Tool returns 'Unexpected response format' when json() raises ValueError."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_response = MagicMock()
     user_response.status_code = 200
     user_response.json.side_effect = ValueError("bad json")
@@ -258,7 +331,6 @@ async def test_list_my_requests_user_search_empty_results(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """200 OK with empty results list → user_not_found."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
     user_response.json.return_value = {"results": []}
@@ -276,10 +348,9 @@ async def test_list_my_requests_requests_http_500(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """HTTP 500 on requests fetch → http_error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 500
     mock_client.get.side_effect = [user_response, requests_response]
@@ -296,10 +367,9 @@ async def test_list_my_requests_requests_parse_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Malformed requests JSON → parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.side_effect = ValueError("malformed")
@@ -316,10 +386,9 @@ async def test_list_my_requests_requests_parse_error(
 async def test_list_my_requests_non_dict_response(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = ["not", "a", "dict"]
@@ -336,10 +405,9 @@ async def test_list_my_requests_non_dict_response(
 async def test_list_my_requests_non_list_results(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {"results": "not-a-list"}
@@ -358,10 +426,9 @@ async def test_list_my_requests_notes_truncation_when_total_exceeds_page(
 ) -> None:
     """Regression: the header must reflect Overseerr's real total (pageInfo),
     not just this page's length, once results are truncated."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {
@@ -383,10 +450,9 @@ async def test_list_my_requests_formats_declined_and_partial(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Status formatting covers declined (req=3) and partially_available (media=4)."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
     requests_response = MagicMock()
     requests_response.status_code = 200
     requests_response.json.return_value = {
@@ -409,7 +475,6 @@ async def test_list_my_requests_unexpected_exception(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Unexpected exception in HTTP call → outer catch, http_error metric."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     mock_client.get.side_effect = RuntimeError("boom")
 
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
@@ -424,11 +489,9 @@ async def test_list_my_requests_formatted_output(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """Tool formats requests with titles, years, and statuses correctly."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -477,11 +540,9 @@ async def test_list_my_requests_resolves_titles_from_real_overseerr_shape(
 ) -> None:
     """Real Overseerr requests carry only tmdbId, never a title/name — the tool
     must resolve it via /movie or /tv before it can display anything useful."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_response = MagicMock()
     user_response.status_code = 200
-    user_response.json.return_value = {"results": [{"id": 123}]}
+    user_response.json.return_value = {"results": [{"id": 123, "username": "testuser"}]}
 
     requests_response = MagicMock()
     requests_response.status_code = 200
@@ -548,7 +609,7 @@ async def test_find_request_not_configured(
 async def test_find_request_unlinked_user(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
@@ -561,7 +622,6 @@ async def test_find_request_unlinked_user(
 async def test_find_request_empty_input(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     tools = build_tools(mock_client, mock_identity, settings, telegram_user_id=1)
     tool_fn = _find_tool(tools)
 
@@ -575,7 +635,6 @@ async def test_find_request_user_not_found(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """When user search returns 404, returns user_not_found error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     resp = MagicMock()
     resp.status_code = 404
     mock_client.get.return_value = resp
@@ -593,7 +652,6 @@ async def test_find_request_user_parse_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """When user search returns malformed JSON, returns parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     resp = MagicMock()
     resp.status_code = 200
     resp.json.side_effect = ValueError("bad json")
@@ -612,7 +670,6 @@ async def test_find_request_user_http_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """When user search returns 500, returns http_error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
     resp = MagicMock()
     resp.status_code = 500
     mock_client.get.return_value = resp
@@ -629,11 +686,9 @@ async def test_find_request_user_http_error(
 async def test_find_request_no_match(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -655,11 +710,9 @@ async def test_find_request_no_match(
 async def test_find_request_exact_match(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -689,11 +742,9 @@ async def test_find_request_exact_match_without_release_year(
 ) -> None:
     """_make_requests_payload always sets releaseYear — real Overseerr media
     without a resolvable date shouldn't. Covers the no-year text branch."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -716,11 +767,9 @@ async def test_find_request_exact_match_without_release_year(
 async def test_find_request_fuzzy_match(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -744,11 +793,9 @@ async def test_find_request_fuzzy_match(
 async def test_find_request_year_stripped(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -777,11 +824,9 @@ async def test_find_request_year_stripped(
 async def test_find_request_multi_match(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -804,11 +849,9 @@ async def test_find_request_multi_match(
 async def test_find_request_http_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 500
@@ -828,11 +871,9 @@ async def test_find_request_requests_parse_error(
     mock_identity: MagicMock, mock_client: AsyncMock, settings: Settings
 ) -> None:
     """When requests fetch returns malformed JSON, returns parse_error."""
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     user_resp = MagicMock()
     user_resp.status_code = 200
-    user_resp.json.return_value = {"results": [{"id": 99}]}
+    user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
 
     req_resp = MagicMock()
     req_resp.status_code = 200
@@ -881,12 +922,10 @@ async def test_find_request_increments_metric_on_every_exit(
 
     monkeypatch.setattr(metrics_module, "tool_calls_total", _FakeCounter())
 
-    mock_identity.get_link = AsyncMock(return_value="testuser")
-
     if mock_setup == "no_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Something Else Entirely")
@@ -894,7 +933,7 @@ async def test_find_request_increments_metric_on_every_exit(
     elif mock_setup == "multi_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Dune Part One", "Dune Part Two")
@@ -902,7 +941,7 @@ async def test_find_request_increments_metric_on_every_exit(
     elif mock_setup == "single_match":
         user_resp = MagicMock()
         user_resp.status_code = 200
-        user_resp.json.return_value = {"results": [{"id": 99}]}
+        user_resp.json.return_value = {"results": [{"id": 99, "username": "testuser"}]}
         req_resp = MagicMock()
         req_resp.status_code = 200
         req_resp.json.return_value = _make_requests_payload("Dune Part One")

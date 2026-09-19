@@ -12,7 +12,8 @@ claude_requests_total = Counter(
     "cleanrr_claude_requests_total",
     # Allowed status values: unauthorized | rejected_too_long | at_capacity |
     # timeout | error | delivery_failed | success.
-    # get_link raising skips this counter; the gap surfaces in telegram_messages_total{kind="text"}.
+    # get_linked_user raising skips this counter; the gap surfaces in
+    # telegram_messages_total{kind="text"}.
     "Inbound Telegram messages by outcome",
     ["status"],
 )
@@ -36,6 +37,11 @@ link_codes_redeemed_total = Counter(
 linked_users = Gauge(
     "cleanrr_linked_users",
     "Number of confirmed Telegram → Overseerr mappings",
+)
+
+links_missing_overseerr_user_id = Gauge(
+    "cleanrr_links_missing_overseerr_user_id",
+    "Linked users still resolved by Overseerr username instead of a stored user id",
 )
 
 tool_calls_total = Counter(

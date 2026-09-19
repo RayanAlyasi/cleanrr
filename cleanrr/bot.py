@@ -1,3 +1,4 @@
+import asyncio
 import logging
 import re
 from datetime import timedelta
@@ -30,6 +31,7 @@ from cleanrr.handlers import (
     on_message,
 )
 from cleanrr.identity import Identity
+from cleanrr.link_migration import _BACKFILL_TIMEOUT_SECONDS, backfill_overseerr_user_ids
 from cleanrr.permissions import CALLBACK_PREFIX, ConfirmationRegistry
 
 logger = logging.getLogger(__name__)
@@ -106,9 +108,24 @@ async def _on_startup(app: Application) -> None:
             "linked and nobody can reach the admin-only tools. Already-linked users can "
             "still chat. Set it in .env (DM @userinfobot for your ID) and restart."
         )
+    try:
+        await asyncio.wait_for(
+            backfill_overseerr_user_ids(identity, app.bot_data.get(OVERSEERR_CLIENT_KEY), settings),
+            timeout=_BACKFILL_TIMEOUT_SECONDS,
+        )
+    except TimeoutError:
+        logger.warning(
+            "link migration timed out after %.0fs; it retries on the next start",
+            _BACKFILL_TIMEOUT_SECONDS,
+        )
+    except Exception:
+        logger.warning("link migration failed; it retries on the next start", exc_info=True)
     if settings.metrics_enabled:
         metrics.start(settings.metrics_port, str(settings.metrics_bind_address))
         metrics.linked_users.set(await identity.user_count())
+        metrics.links_missing_overseerr_user_id.set(
+            await identity.count_links_needing_overseerr_user_id()
+        )
         logger.info("metrics on %s:%d", settings.metrics_bind_address, settings.metrics_port)
     logger.info("cleanrr ready")
 

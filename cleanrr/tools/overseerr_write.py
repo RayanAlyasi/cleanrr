@@ -12,7 +12,7 @@ import cleanrr.metrics as metrics
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._results import text_result
-from cleanrr.tools._user_request import _fetch_media_title, _resolve_user_id
+from cleanrr.tools._user_request import _fetch_media_title, resolve_linked_user_id
 
 logger = logging.getLogger(__name__)
 
@@ -49,8 +49,8 @@ def build_tools(
             metrics.tool_calls_total.labels(tool="remove_my_request", status="bad_args").inc()
             return text_result("Bad request id.", is_error=True)
 
-        overseerr_username = await identity.get_link(telegram_user_id)
-        if overseerr_username is None:
+        link = await identity.get_linked_user(telegram_user_id)
+        if link is None:
             metrics.tool_calls_total.labels(tool="remove_my_request", status="unlinked_user").inc()
             return text_result(
                 "You haven't linked your Overseerr account yet. Send /link <code> "
@@ -59,8 +59,8 @@ def build_tools(
             )
 
         base_url = str(settings.overseerr_url).rstrip("/")
-        caller_user_id, resolve_status = await _resolve_user_id(
-            client, base_url, overseerr_username
+        caller_user_id, resolve_status = await resolve_linked_user_id(
+            client, identity, base_url, link
         )
         if caller_user_id is None:
             metrics.tool_calls_total.labels(tool="remove_my_request", status=resolve_status).inc()
