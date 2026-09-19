@@ -18,11 +18,11 @@ RUN apt-get update \
 ARG VERSION=0.0.0+local
 ENV SETUPTOOLS_SCM_PRETEND_VERSION=$VERSION
 
-COPY pyproject.toml LICENSE README.md ./
+COPY pyproject.toml constraints.txt LICENSE README.md ./
 COPY cleanrr ./cleanrr
 # pip isn't needed at runtime; drop it (and its vendored deps, e.g. msgpack)
 # so scanners don't flag CVEs in tooling that's never imported by cleanrr.
-RUN pip install . \
+RUN pip install -c constraints.txt . \
  && pip uninstall -y pip setuptools wheel
 
 RUN useradd --create-home --shell /bin/bash --uid 1000 cleanrr \

@@ -1,0 +1,16 @@
+# Exact versions CI, the release image and pre-commit install.
+# pyproject.toml keeps the compatible ranges; Dependabot bumps these pins.
+aiosqlite==0.21.0
+bandit==1.9.4
+claude-agent-sdk==0.2.126
+packaging==26.2
+pre-commit==4.6.1
+prometheus-client==0.22.1
+pydantic-settings==2.14.2
+pyright==1.1.411
+pytest==9.1.1
+pytest-asyncio==1.4.0
+pytest-cov==7.1.0
+python-telegram-bot==22.8
+ruff==0.16.8
+semgrep==1.177.0
