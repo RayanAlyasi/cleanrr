@@ -2,7 +2,10 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import tempfile
 from contextlib import AsyncExitStack
+from functools import lru_cache
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 import httpx
@@ -48,6 +51,16 @@ logger = logging.getLogger(__name__)
 # acquire and get a graceful TimeoutError rather than hang.
 _TIMEOUT_RECOVERY_SECONDS = 10.0
 _TIMEOUT_RESTART_SECONDS = 75.0
+
+
+@lru_cache(maxsize=1)
+def _isolated_cwd() -> Path:
+    # The CLI resolves .claude/settings.json and .claude/settings.local.json
+    # against its working directory, so inheriting the bot's cwd would point
+    # it at a checkout's own settings. One empty directory per process,
+    # never removed: it holds nothing and the process is long-lived.
+    return Path(tempfile.mkdtemp(prefix="cleanrr-agent-"))
+
 
 DEFAULT_SYSTEM_PROMPT = """\
 You are cleanrr, a Telegram bot for a self-hosted media homelab
@@ -180,6 +193,13 @@ class Agent:
         self._options = ClaudeAgentOptions(
             model=model,
             system_prompt=system_prompt or DEFAULT_SYSTEM_PROMPT,
+            # No filesystem settings: a permissions.allow entry in ~/.claude or in a
+            # checkout's .claude/settings*.json auto-approves that tool and skips
+            # can_use_tool entirely, which is the confirm/cancel gate. This also
+            # stops user- and project-scope CLAUDE.md discovery, which cleanrr
+            # never relied on — the system_prompt above is always the full prompt.
+            setting_sources=[],
+            cwd=_isolated_cwd(),
         )
         self._timeout_seconds = timeout_seconds
         self._telegram_bot = telegram_bot

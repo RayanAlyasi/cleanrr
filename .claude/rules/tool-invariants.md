@@ -13,6 +13,7 @@ These are the load-bearing facts a new or changed tool must keep true. Each one 
 - A destructive tool lives in `cleanrr/tools/<service>_write.py` **and** is listed in `WRITE_TOOLS` in `cleanrr/permissions/_callback.py`. A tool missing from that set is auto-allowed by the SDK and runs with no confirmation.
 - Admin-only destructive tools are also in `ADMIN_ONLY_TOOLS`, and re-check `telegram_user_id in settings.admin_telegram_ids` at mutation time.
 - `ClaudeAgentOptions.tools` stays `[]` and `allowed_tools` never contains a `WRITE_TOOLS` member (see `Agent.start`).
+- `ClaudeAgentOptions.setting_sources` stays `[]` and `cwd` stays `_isolated_cwd()` (see `Agent.__init__`): a `permissions.allow` entry in a settings file the CLI loads auto-approves that tool and skips `can_use_tool`. Nothing sets `settings`, `sandbox`, `plugins` or `add_dirs` on the options either; each reopens a filesystem read that `setting_sources=[]` does not close.
 - Every tool is described in `DEFAULT_SYSTEM_PROMPT` under "Tools available", with when to use it and what to pass.
 - A tool's text result includes every identifier a follow-up tool needs (`request_id`, torrent hash). Tests assert the identifier, not just the title.
 - Results go through `text_result(..., is_error=...)`; a tool never raises into the SDK. `is_error=True` only for failures the user can't act on themselves.
