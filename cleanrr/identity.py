@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import logging
 import secrets
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 
@@ -24,6 +25,35 @@ def generate_code() -> str:
 
 def _now_ts() -> int:
     return int(datetime.now(UTC).timestamp())
+
+
+@dataclass(frozen=True)
+class LinkedUser:
+    telegram_user_id: int
+    overseerr_username: str
+    linked_at: int
+    overseerr_user_id: int | None
+
+
+# ALTER TABLE has no IF NOT EXISTS form, so each addition is guarded by a
+# pragma_table_info check instead (see Identity._apply_schema_additions).
+_SCHEMA_ADDITIONS: tuple[tuple[str, str, str], ...] = (
+    (
+        "link_codes",
+        "overseerr_user_id",
+        "ALTER TABLE link_codes ADD COLUMN overseerr_user_id INTEGER",
+    ),
+    (
+        "user_links",
+        "overseerr_user_id",
+        "ALTER TABLE user_links ADD COLUMN overseerr_user_id INTEGER",
+    ),
+    (
+        "user_links",
+        "overseerr_user_id_linked_at",
+        "ALTER TABLE user_links ADD COLUMN overseerr_user_id_linked_at INTEGER",
+    ),
+)
 
 
 class Identity:
@@ -54,6 +84,17 @@ class Identity:
             );
         """)
         await self._conn.commit()
+        await self._apply_schema_additions(self._conn)
+
+    async def _apply_schema_additions(self, conn: aiosqlite.Connection) -> None:
+        for table, column, ddl in _SCHEMA_ADDITIONS:
+            cursor = await conn.execute(
+                "SELECT 1 FROM pragma_table_info(?) WHERE name = ?", (table, column)
+            )
+            row = await cursor.fetchone()
+            if row is None:
+                await conn.execute(ddl)
+        await conn.commit()
 
     async def stop(self) -> None:
         if self._conn is None:
@@ -61,15 +102,24 @@ class Identity:
         await self._conn.close()
         self._conn = None
 
-    async def issue_code(self, overseerr_username: str) -> str:
+    async def issue_code(
+        self, overseerr_username: str, *, overseerr_user_id: int | None = None
+    ) -> str:
         if self._conn is None:
             raise RuntimeError("Identity.start() must be called before issue_code()")
         now = _now_ts()
         code = generate_code()
         await self._conn.execute(
-            "INSERT INTO link_codes (code, overseerr_username, created_at, expires_at)"
-            " VALUES (?, ?, ?, ?)",
-            (code, overseerr_username, now, now + int(self._code_ttl.total_seconds())),
+            "INSERT INTO link_codes"
+            " (code, overseerr_username, created_at, expires_at, overseerr_user_id)"
+            " VALUES (?, ?, ?, ?, ?)",
+            (
+                code,
+                overseerr_username,
+                now,
+                now + int(self._code_ttl.total_seconds()),
+                overseerr_user_id,
+            ),
         )
         await self._conn.commit()
         # Strip newlines so a hostile username can't inject fake log lines.
@@ -88,7 +138,7 @@ class Identity:
         cursor = await self._conn.execute(
             "UPDATE link_codes SET consumed_at = ?"
             " WHERE code = ? AND consumed_at IS NULL AND expires_at > ?"
-            " RETURNING overseerr_username",
+            " RETURNING overseerr_username, overseerr_user_id",
             (now, code, now),
         )
         row = await cursor.fetchone()
@@ -97,32 +147,119 @@ class Identity:
             metrics.link_codes_redeemed_total.labels(status="invalid").inc()
             return None
         overseerr_username = row[0]
+        overseerr_user_id = row[1] if isinstance(row[1], int) else None
         # ON CONFLICT replaces the previous mapping so re-linking just works.
+        # overseerr_user_id is assigned even when NULL: re-linking must never
+        # leave a previous account's id behind.
         await self._conn.execute(
-            "INSERT INTO user_links (telegram_user_id, overseerr_username, linked_at)"
-            " VALUES (?, ?, ?)"
+            "INSERT INTO user_links (telegram_user_id, overseerr_username, linked_at,"
+            " overseerr_user_id, overseerr_user_id_linked_at)"
+            " VALUES (?, ?, ?, ?, ?)"
             " ON CONFLICT(telegram_user_id) DO UPDATE SET"
             " overseerr_username = excluded.overseerr_username,"
-            " linked_at = excluded.linked_at",
-            (telegram_user_id, overseerr_username, now),
+            " linked_at = excluded.linked_at,"
+            " overseerr_user_id = excluded.overseerr_user_id,"
+            " overseerr_user_id_linked_at = excluded.overseerr_user_id_linked_at",
+            (telegram_user_id, overseerr_username, now, overseerr_user_id, now),
         )
         await self._conn.commit()
         safe_username = overseerr_username.replace("\n", " ").replace("\r", " ")
         logger.info("linked telegram %s to overseerr @%s", telegram_user_id, safe_username)
         metrics.link_codes_redeemed_total.labels(status="success").inc()
         metrics.linked_users.set(await self.user_count())
+        metrics.links_missing_overseerr_user_id.set(
+            await self.count_links_needing_overseerr_user_id()
+        )
         return overseerr_username
 
     # Used by Phase 4 tool handlers to resolve telegram_id → overseerr_username.
     async def get_link(self, telegram_user_id: int) -> str | None:
+        link = await self.get_linked_user(telegram_user_id)
+        return link.overseerr_username if link else None
+
+    async def get_linked_user(self, telegram_user_id: int) -> LinkedUser | None:
         if self._conn is None:
-            raise RuntimeError("Identity.start() must be called before get_link()")
+            raise RuntimeError("Identity.start() must be called before get_linked_user()")
         cursor = await self._conn.execute(
-            "SELECT overseerr_username FROM user_links WHERE telegram_user_id = ?",
+            "SELECT telegram_user_id, overseerr_username, linked_at,"
+            " overseerr_user_id, overseerr_user_id_linked_at"
+            " FROM user_links WHERE telegram_user_id = ?",
             (telegram_user_id,),
         )
         row = await cursor.fetchone()
-        return row[0] if row else None
+        if row is None:
+            return None
+        telegram_id, overseerr_username, linked_at, stored_id, stored_id_linked_at = row
+        # An image without these columns only ever rewrites linked_at, never the
+        # snapshot, so a mismatch means the stored id predates the current link.
+        overseerr_user_id = (
+            stored_id if isinstance(stored_id, int) and stored_id_linked_at == linked_at else None
+        )
+        return LinkedUser(
+            telegram_user_id=telegram_id,
+            overseerr_username=overseerr_username,
+            linked_at=linked_at,
+            overseerr_user_id=overseerr_user_id,
+        )
+
+    async def record_overseerr_user_id(self, link: LinkedUser, overseerr_user_id: int) -> bool:
+        if self._conn is None:
+            raise RuntimeError("Identity.start() must be called before record_overseerr_user_id()")
+        cursor = await self._conn.execute(
+            "UPDATE user_links"
+            " SET overseerr_user_id = ?, overseerr_user_id_linked_at = ?"
+            " WHERE telegram_user_id = ? AND overseerr_username = ? AND linked_at = ?"
+            " AND (overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at)",
+            (
+                overseerr_user_id,
+                link.linked_at,
+                link.telegram_user_id,
+                link.overseerr_username,
+                link.linked_at,
+            ),
+        )
+        await self._conn.commit()
+        if cursor.rowcount == 1:
+            metrics.links_missing_overseerr_user_id.set(
+                await self.count_links_needing_overseerr_user_id()
+            )
+            return True
+        return False
+
+    async def links_needing_overseerr_user_id(self) -> list[LinkedUser]:
+        if self._conn is None:
+            raise RuntimeError(
+                "Identity.start() must be called before links_needing_overseerr_user_id()"
+            )
+        cursor = await self._conn.execute(
+            "SELECT telegram_user_id, overseerr_username, linked_at,"
+            " overseerr_user_id, overseerr_user_id_linked_at"
+            " FROM user_links"
+            " WHERE overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at"
+            " ORDER BY telegram_user_id"
+        )
+        rows = await cursor.fetchall()
+        return [
+            LinkedUser(
+                telegram_user_id=row[0],
+                overseerr_username=row[1],
+                linked_at=row[2],
+                overseerr_user_id=None,
+            )
+            for row in rows
+        ]
+
+    async def count_links_needing_overseerr_user_id(self) -> int:
+        if self._conn is None:
+            raise RuntimeError(
+                "Identity.start() must be called before count_links_needing_overseerr_user_id()"
+            )
+        cursor = await self._conn.execute(
+            "SELECT COUNT(*) FROM user_links"
+            " WHERE overseerr_user_id IS NULL OR overseerr_user_id_linked_at IS NOT linked_at"
+        )
+        row = await cursor.fetchone()
+        return int(row[0]) if row else 0
 
     async def user_count(self) -> int:
         if self._conn is None:
