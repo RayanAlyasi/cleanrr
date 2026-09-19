@@ -42,6 +42,10 @@ logger = logging.getLogger(__name__)
 # Worst case a timeout holds the lock for drain + stop() + start() =
 # 10 + 20 + 75 = 105s, which must stay under claude_timeout_seconds
 # (default 120s) since a queued respond() waits on the lock that long.
+# A client left None by a previous failed restart adds one further bounded
+# start() (75s) before the turn's own wait_for even begins, so a caller
+# queued behind that turn can exceed claude_timeout_seconds on the lock
+# acquire and get a graceful TimeoutError rather than hang.
 _TIMEOUT_RECOVERY_SECONDS = 10.0
 _TIMEOUT_RESTART_SECONDS = 75.0
 
@@ -330,10 +334,15 @@ class Agent:
             drained += 1
         logger.info("drained %d message(s) from the interrupted turn", drained)
 
-    async def _recover_from_timeout(self) -> None:
+    async def _restart_client(self) -> None:
         # Always set alongside self._client in start(), so guaranteed non-None here.
         telegram_user_id: int = self._telegram_user_id  # type: ignore[assignment]
+        # start() is safe to bound — ClaudeSDKClient.connect() cleans up its
+        # own subprocess on any exception, including cancellation from this
+        # wait_for firing.
+        await asyncio.wait_for(self.start(telegram_user_id), timeout=_TIMEOUT_RESTART_SECONDS)
 
+    async def _recover_from_timeout(self) -> None:
         client = self._client
         if client is not None:
             try:
@@ -351,17 +360,14 @@ class Agent:
                 )
 
         # Not wrapped: the SDK's close() escalation must run to completion or
-        # the CLI child is orphaned as <defunct>. start() is safe to bound —
-        # ClaudeSDKClient.connect() cleans up its own subprocess on any
-        # exception, including cancellation from this wait_for firing.
+        # the CLI child is orphaned as <defunct>.
         await self.stop()
-        await asyncio.wait_for(self.start(telegram_user_id), timeout=_TIMEOUT_RESTART_SECONDS)
+        await self._restart_client()
 
     async def respond(self, *, prompt: str) -> str:
-        if self._client is None:
+        telegram_user_id = self._telegram_user_id
+        if telegram_user_id is None:
             raise RuntimeError("Agent.start() must be called before respond()")
-        # Always set alongside self._client in start(), so guaranteed non-None here.
-        telegram_user_id: int = self._telegram_user_id  # type: ignore[assignment]
 
         session_id = f"telegram_{telegram_user_id}"
 
@@ -381,6 +387,14 @@ class Agent:
         # instead of hanging.
         await asyncio.wait_for(self._lock.acquire(), timeout=self._timeout_seconds)
         try:
+            if self._client is None:
+                # A previous restart (post-timeout recovery, or the reconnect below)
+                # failed and left this Agent clientless; without rebuilding here, every
+                # later turn for this user fails until the bot process restarts.
+                logger.warning(
+                    "no client for user %s — rebuilding before this turn", telegram_user_id
+                )
+                await self._restart_client()
             try:
                 try:
                     return await asyncio.wait_for(_query(), timeout=self._timeout_seconds)
