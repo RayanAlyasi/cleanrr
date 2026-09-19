@@ -276,6 +276,132 @@ async def test_sweep_loop_logs_and_survives_internal_exception(
     assert call_count >= 1
 
 
+@pytest.mark.asyncio
+async def test_has_pending_for_user() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    assert await reg.has_pending_for_user(1) is False
+
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=1,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    assert await reg.has_pending_for_user(1) is True
+    assert await reg.has_pending_for_user(2) is False
+
+
+@pytest.mark.asyncio
+async def test_has_pending_for_user_false_once_expired() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=0.01)
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=1)
+    assert cid is not None
+    await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=1,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    await asyncio.sleep(0.05)
+    assert await reg.has_pending_for_user(1) is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_for_user_resolves_future_as_denied() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    count = await reg.cancel_for_user(42)
+
+    assert count == 1
+    assert pending.outcome == "denied"
+    assert pending.future.result() is False
+    assert await reg.get(cid) is None
+
+
+@pytest.mark.asyncio
+async def test_cancel_for_user_resolves_all_entries_for_that_user() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    cid_a = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    cid_b = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    cid_other = await reg.reserve(tool_name="remove_my_request", telegram_user_id=99)
+    assert cid_a is not None
+    assert cid_b is not None
+    assert cid_other is not None
+    for cid, uid in ((cid_a, 42), (cid_b, 42), (cid_other, 99)):
+        await reg.register(
+            confirmation_id=cid,
+            telegram_user_id=uid,
+            tool_name="remove_my_request",
+            tool_args={},
+            prompt_message_id=1,
+        )
+
+    count = await reg.cancel_for_user(42)
+
+    assert count == 2
+    assert await reg.has_pending_for_user(99) is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_for_user_twice_is_idempotent() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+
+    first = await reg.cancel_for_user(42)
+    second = await reg.cancel_for_user(42)
+
+    assert first == 1
+    assert second == 0
+
+
+@pytest.mark.asyncio
+async def test_cancel_for_user_skips_already_resolved_entry() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    cid = await reg.reserve(tool_name="remove_my_request", telegram_user_id=42)
+    assert cid is not None
+    pending = await reg.register(
+        confirmation_id=cid,
+        telegram_user_id=42,
+        tool_name="remove_my_request",
+        tool_args={},
+        prompt_message_id=1,
+    )
+    await reg.resolve(cid, telegram_user_id=42, allowed=True)
+
+    count = await reg.cancel_for_user(42)
+
+    assert count == 0
+    assert pending.outcome == "confirmed"
+    assert pending.future.result() is True
+
+
+@pytest.mark.asyncio
+async def test_cancel_for_user_with_nothing_pending_returns_zero() -> None:
+    reg = ConfirmationRegistry(ttl_seconds=60)
+    assert await reg.cancel_for_user(42) == 0
+
+
 # ---------------------------------------------------------------------------
 # make_can_use_tool
 # ---------------------------------------------------------------------------
