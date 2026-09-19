@@ -4,7 +4,12 @@ from typing import Any
 
 import pytest
 
-from cleanrr.tools._queue_reason import QueueDiagnosis, diagnose_queue, render_queue_reason
+from cleanrr.tools._queue_reason import (
+    _SENTENCES,
+    QueueDiagnosis,
+    diagnose_queue,
+    render_queue_reason,
+)
 
 # ---------------------------------------------------------------------------
 # diagnose_queue — shape guards
@@ -112,7 +117,7 @@ def test_diagnose_queue_worst_of_many() -> None:
     ]
     diagnosis = diagnose_queue(records)
     assert diagnosis.code == "import_blocked"
-    assert diagnosis.flagged == 2
+    assert diagnosis.flagged == 1
     assert diagnosis.records == 3
 
 
@@ -139,6 +144,19 @@ def test_diagnose_queue_cuts_each_message_to_120_chars() -> None:
     record = {"trackedDownloadState": "importBlocked", "errorMessage": "x" * 200}
     messages = diagnose_queue([record]).messages
     assert messages == ["x" * 120]
+
+
+def test_diagnose_queue_error_message_goes_first_and_is_not_crowded_out() -> None:
+    record = {
+        "trackedDownloadState": "importBlocked",
+        "errorMessage": "client says no",
+        "statusMessages": [
+            {"messages": ["m1"]},
+            {"messages": ["m2"]},
+            {"messages": ["m3"]},
+        ],
+    }
+    assert diagnose_queue([record]).messages == ["client says no", "m1", "m2"]
 
 
 def test_diagnose_queue_malformed_status_messages_yields_no_messages() -> None:
@@ -191,18 +209,72 @@ def test_render_queue_reason_contains_service() -> None:
     assert "Sonarr" in result
 
 
+@pytest.mark.parametrize(
+    ("record", "code"),
+    [
+        ({"trackedDownloadState": "importBlocked"}, "import_blocked"),
+        ({"trackedDownloadState": "failed"}, "failed"),
+        ({"status": "downloadClientUnavailable"}, "client_unavailable"),
+        ({"trackedDownloadState": "ignored"}, "ignored"),
+        ({"status": "paused"}, "paused"),
+        ({"trackedDownloadStatus": "warning"}, "warning"),
+        ({"status": "delay"}, "delayed"),
+        ({"trackedDownloadState": "importPending"}, "import_pending"),
+    ],
+)
+def test_render_queue_reason_renders_every_sentence(record: dict[str, Any], code: str) -> None:
+    diagnosis = diagnose_queue([record])
+    assert diagnosis.code == code
+    result = render_queue_reason(diagnosis, service="Radarr", include_download_id=False)
+    assert result.startswith(_SENTENCES[code].format(service="Radarr"))
+
+
 def test_render_queue_reason_affected_count_only_when_more_than_one() -> None:
     single = diagnose_queue([{"trackedDownloadState": "importBlocked"}])
-    multiple = diagnose_queue(
+    single_result = render_queue_reason(single, service="Radarr", include_download_id=False)
+    assert "queued items are affected" not in single_result
+
+    worst_alone = diagnose_queue(
         [
             {"trackedDownloadState": "importPending"},
             {"trackedDownloadState": "importBlocked"},
         ]
     )
-    single_result = render_queue_reason(single, service="Radarr", include_download_id=False)
-    multiple_result = render_queue_reason(multiple, service="Radarr", include_download_id=False)
-    assert "queued items are affected" not in single_result
-    assert "2 of 2 queued items are affected." in multiple_result
+    worst_alone_result = render_queue_reason(
+        worst_alone, service="Radarr", include_download_id=False
+    )
+    assert "queued items are affected" not in worst_alone_result
+    assert worst_alone.flagged == 1
+
+    worst_shared = diagnose_queue(
+        [
+            {"trackedDownloadState": "importBlocked"},
+            {"trackedDownloadState": "importBlocked"},
+            {"status": "delay"},
+            {},
+        ]
+    )
+    worst_shared_result = render_queue_reason(
+        worst_shared, service="Radarr", include_download_id=False
+    )
+    assert "2 of 4 queued items are affected." in worst_shared_result
+    assert worst_shared.flagged == 2
+
+    # _CODE_ORDER ranks import_blocked first, so it wins even though
+    # failed is more numerous.
+    lesser_more_numerous = diagnose_queue(
+        [
+            {"trackedDownloadState": "failed"},
+            {"trackedDownloadState": "failed"},
+            {"trackedDownloadState": "importBlocked"},
+        ]
+    )
+    lesser_more_numerous_result = render_queue_reason(
+        lesser_more_numerous, service="Radarr", include_download_id=False
+    )
+    assert lesser_more_numerous.code == "import_blocked"
+    assert lesser_more_numerous.flagged == 1
+    assert "queued items are affected" not in lesser_more_numerous_result
 
 
 def test_render_queue_reason_hash_only_when_requested_and_stuck() -> None:

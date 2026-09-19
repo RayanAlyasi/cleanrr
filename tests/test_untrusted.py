@@ -55,6 +55,13 @@ def test_bound_text_strips_leading_and_trailing_whitespace() -> None:
     assert bound_text("  hello world  ") == "hello world"
 
 
+def test_bound_text_slices_before_scanning_a_hostile_input() -> None:
+    value = "a" * 10 + "\x00" * 100_000 + "b" * 100
+    result = bound_text(value, limit=80)
+    assert len(result) <= 80
+    assert result.startswith("aaaaaaaaaa")
+
+
 # ---------------------------------------------------------------------------
 # bound_message_list
 # ---------------------------------------------------------------------------

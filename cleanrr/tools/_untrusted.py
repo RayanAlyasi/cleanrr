@@ -6,6 +6,10 @@ from __future__ import annotations
 def bound_text(value: object, *, limit: int = 80, default: str = "") -> str:
     if not isinstance(value, str):
         return default
+    # Slice before scanning so a multi-megabyte upstream string doesn't cost a
+    # full pass; whitespace collapse can only shrink, so this 64x prefix only
+    # falls short of `limit` when over 63 of every 64 chars are non-printable.
+    value = value[: limit * 64]
     # Non-printables become a space rather than being dropped, so a
     # zero-width character cannot silently join two words.
     cleaned = "".join(ch if ch.isprintable() else " " for ch in value)

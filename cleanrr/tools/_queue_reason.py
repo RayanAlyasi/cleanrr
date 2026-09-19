@@ -49,7 +49,7 @@ _CODE_ORDER: tuple[QueueCode, ...] = (
     "ok",
 )
 
-_STUCK_CODES: frozenset[str] = frozenset(
+_STUCK_CODES: frozenset[QueueCode] = frozenset(
     {"import_blocked", "failed", "client_unavailable", "ignored", "paused", "warning"}
 )
 
@@ -68,6 +68,7 @@ _SENTENCES: dict[str, str] = {
 @dataclass(frozen=True)
 class QueueDiagnosis:
     records: int
+    # Records whose code equals `code`, the worst code found.
     flagged: int
     code: QueueCode
     messages: list[str]
@@ -106,9 +107,10 @@ def _record_code(record: dict[str, Any]) -> QueueCode:
 
 
 def _record_messages(record: dict[str, Any]) -> list[str]:
-    # statusMessages[].title is the download item's own name, not a
-    # reason, so it is left out.
-    raw: list[object] = []
+    # errorMessage is the download client's own message and the most
+    # actionable line, so it goes first — statusMessages[].title is the
+    # download item's own name, not a reason, so it is left out.
+    raw: list[object] = [record.get("errorMessage")]
     status_messages = record.get("statusMessages")
     if isinstance(status_messages, list):
         for item in status_messages[:_MAX_MESSAGES]:
@@ -117,7 +119,6 @@ def _record_messages(record: dict[str, Any]) -> list[str]:
             messages = item.get("messages")
             if isinstance(messages, list):
                 raw.extend(messages[:_MAX_MESSAGES])
-    raw.append(record.get("errorMessage"))
     return bound_message_list(raw, limit=_MAX_MESSAGE_CHARS, max_items=_MAX_MESSAGES)
 
 
@@ -126,7 +127,7 @@ def diagnose_queue(records: object) -> QueueDiagnosis:
         return QueueDiagnosis(records=0, flagged=0, code="ok", messages=[], download_id=None)
 
     count = 0
-    flagged = 0
+    codes: list[QueueCode] = []
     worst_record: dict[str, Any] | None = None
     worst_code: QueueCode = "ok"
     worst_rank = _CODE_ORDER.index("ok")
@@ -136,8 +137,7 @@ def diagnose_queue(records: object) -> QueueDiagnosis:
             continue
         count += 1
         code = _record_code(record)
-        if code != "ok":
-            flagged += 1
+        codes.append(code)
         rank = _CODE_ORDER.index(code)
         if rank < worst_rank:
             worst_rank = rank
@@ -145,16 +145,14 @@ def diagnose_queue(records: object) -> QueueDiagnosis:
             worst_code = code
 
     if worst_record is None:
-        return QueueDiagnosis(
-            records=count, flagged=flagged, code="ok", messages=[], download_id=None
-        )
+        return QueueDiagnosis(records=count, flagged=0, code="ok", messages=[], download_id=None)
 
     # Radarr/Sonarr set downloadId to the download client's id and
     # qBittorrent's is the infohash, so a non-torrent client's id simply
     # fails the check.
     return QueueDiagnosis(
         records=count,
-        flagged=flagged,
+        flagged=codes.count(worst_code),
         code=worst_code,
         messages=_record_messages(worst_record),
         download_id=normalize_torrent_hash(worst_record.get("downloadId")),
