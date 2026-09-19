@@ -60,6 +60,7 @@ def test_bound_text_slices_before_scanning_a_hostile_input() -> None:
     result = bound_text(value, limit=80)
     assert len(result) <= 80
     assert result.startswith("aaaaaaaaaa")
+    assert "b" not in result
 
 
 # ---------------------------------------------------------------------------
