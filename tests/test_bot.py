@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import logging
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -31,6 +32,7 @@ from cleanrr.handlers import (
     on_message,
 )
 from cleanrr.identity import Identity
+from cleanrr.link_migration import BackfillResult
 
 
 def _make_settings(
@@ -97,6 +99,7 @@ async def test_on_startup_starts_identity() -> None:
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
     settings = _make_settings(metrics_enabled=False)
@@ -109,7 +112,13 @@ async def test_on_startup_starts_identity() -> None:
     }
     app.bot.set_my_commands = AsyncMock()
 
-    with patch("cleanrr.bot.metrics.start") as mock_metrics_start:
+    with (
+        patch("cleanrr.bot.metrics.start") as mock_metrics_start,
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ),
+    ):
         await _on_startup(app)
 
     registry.start.assert_awaited_once()
@@ -123,6 +132,7 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=7)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
     settings = _make_settings(metrics_enabled=True, metrics_port=9200)
@@ -138,6 +148,10 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
     with (
         patch("cleanrr.bot.metrics.start") as mock_metrics_start,
         patch("cleanrr.bot.metrics.linked_users") as mock_linked_users,
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ),
     ):
         await _on_startup(app)
 
@@ -152,6 +166,7 @@ async def test_on_startup_warns_when_no_admins_configured(
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
     settings = _make_settings()
@@ -167,6 +182,10 @@ async def test_on_startup_warns_when_no_admins_configured(
     with (
         caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
         patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ),
     ):
         await _on_startup(app)
 
@@ -183,6 +202,7 @@ async def test_on_startup_does_not_warn_when_admins_configured(
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=2)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
     settings = _make_settings(admin_telegram_ids={424242, 515151})
@@ -198,6 +218,10 @@ async def test_on_startup_does_not_warn_when_admins_configured(
     with (
         caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
         patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ),
     ):
         await _on_startup(app)
 
@@ -211,6 +235,7 @@ async def test_on_startup_logs_admin_count_not_ids(
     identity = MagicMock()
     identity.start = AsyncMock()
     identity.user_count = AsyncMock(return_value=2)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
     registry = MagicMock()
     registry.start = AsyncMock()
     settings = _make_settings(admin_telegram_ids={424242, 515151})
@@ -226,12 +251,281 @@ async def test_on_startup_logs_admin_count_not_ids(
     with (
         caplog.at_level(logging.INFO, logger="cleanrr.bot"),
         patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ),
     ):
         await _on_startup(app)
 
     assert "2 admin Telegram ID(s) configured" in caplog.text
     assert "424242" not in caplog.text
     assert "515151" not in caplog.text
+
+
+@pytest.mark.asyncio
+async def test_on_startup_awaits_backfill_with_identity_client_and_settings() -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+    overseerr_client = MagicMock()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+        OVERSEERR_CLIENT_KEY: overseerr_client,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ) as mock_backfill,
+    ):
+        await _on_startup(app)
+
+    mock_backfill.assert_awaited_once_with(identity, overseerr_client, settings)
+
+
+@pytest.mark.asyncio
+async def test_on_startup_backfills_with_none_client_when_key_missing() -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 0)),
+        ) as mock_backfill,
+    ):
+        await _on_startup(app)
+
+    mock_backfill.assert_awaited_once_with(identity, None, settings)
+    app.bot.set_my_commands.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_backfill_timeout_does_not_stop_startup(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+        patch("cleanrr.bot.backfill_overseerr_user_ids", AsyncMock(side_effect=TimeoutError)),
+    ):
+        await _on_startup(app)
+
+    assert "link migration timed out" in caplog.text
+    app.bot.set_my_commands.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_backfill_timeout_is_enforced_by_wait_for(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    async def _slow_backfill(*_args: object, **_kwargs: object) -> BackfillResult:
+        await asyncio.sleep(0.5)
+        return BackfillResult(0, 0)
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+        patch("cleanrr.bot.backfill_overseerr_user_ids", _slow_backfill),
+        patch("cleanrr.bot._BACKFILL_TIMEOUT_SECONDS", 0.01),
+    ):
+        await asyncio.wait_for(_on_startup(app), timeout=2)
+
+    assert "link migration timed out" in caplog.text
+    app.bot.set_my_commands.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_backfill_error_does_not_stop_startup(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(side_effect=RuntimeError("boom")),
+        ),
+    ):
+        await _on_startup(app)
+
+    assert "link migration failed" in caplog.text
+    app.bot.set_my_commands.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_sets_missing_gauge_when_metrics_enabled() -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=2)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings(metrics_enabled=True)
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        patch("cleanrr.bot.metrics.start"),
+        patch("cleanrr.bot.metrics.links_missing_overseerr_user_id") as mock_gauge,
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 2)),
+        ),
+    ):
+        await _on_startup(app)
+
+    mock_gauge.set.assert_called_once_with(2)
+
+
+@pytest.mark.asyncio
+async def test_on_startup_does_not_set_missing_gauge_when_metrics_disabled() -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = AsyncMock(return_value=2)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings(metrics_enabled=False)
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        patch("cleanrr.bot.metrics.start") as mock_metrics_start,
+        patch("cleanrr.bot.metrics.links_missing_overseerr_user_id") as mock_gauge,
+        patch(
+            "cleanrr.bot.backfill_overseerr_user_ids",
+            AsyncMock(return_value=BackfillResult(0, 2)),
+        ),
+    ):
+        await _on_startup(app)
+
+    mock_gauge.set.assert_not_called()
+    mock_metrics_start.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_startup_runs_backfill_before_reading_the_gauge() -> None:
+    order: list[str] = []
+
+    async def _fake_backfill(*_args: object, **_kwargs: object) -> BackfillResult:
+        order.append("backfill")
+        return BackfillResult(0, 0)
+
+    async def _fake_count() -> int:
+        order.append("gauge_read")
+        return 0
+
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    identity.count_links_needing_overseerr_user_id = _fake_count
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings(metrics_enabled=True)
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        patch("cleanrr.bot.metrics.start"),
+        patch("cleanrr.bot.metrics.links_missing_overseerr_user_id"),
+        patch("cleanrr.bot.backfill_overseerr_user_ids", _fake_backfill),
+    ):
+        await _on_startup(app)
+
+    assert order == ["backfill", "gauge_read"]
 
 
 def test_build_application_wires_bot_data_and_handlers() -> None:

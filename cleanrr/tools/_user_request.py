@@ -11,7 +11,7 @@ import httpx
 from telegram.error import TelegramError
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools._results import text_result
 
 if TYPE_CHECKING:
@@ -218,43 +218,15 @@ def _fuzzy_match_titles(query: str, candidates: list[str]) -> list[str]:
     return [c for c, _ in scored[:_FUZZY_MATCH_LIMIT]]
 
 
-_USER_SEARCH_PAGE_SIZE = 50
+_USER_SEARCH_PAGE_SIZE = 100
+_USER_SEARCH_MAX_PAGES = 5
 
 
 async def _resolve_user_id(
     client: httpx.AsyncClient, base_url: str, username: str
 ) -> tuple[int | None, ResolveUserStatus]:
-    user_search = await client.get(
-        f"{base_url}/api/v1/user",
-        params={"q": username, "take": _USER_SEARCH_PAGE_SIZE},
-    )
-    if user_search.status_code == 404:
-        return None, "user_not_found"
-    if user_search.status_code != 200:
-        return None, "http_error"
-
-    try:
-        user_data = user_search.json()
-    except ValueError:
-        return None, "parse_error"
-    if not isinstance(user_data, dict):
-        return None, "parse_error"
-    users = user_data.get("results", [])
-    if not isinstance(users, list):
-        return None, "parse_error"
-
-    if not users:
-        return None, "user_not_found"
-
-    # The `q` filter is a Jellyseerr extension, not guaranteed on vanilla
-    # Overseerr's /user endpoint — a non-filtering backend would return an
-    # unrelated page of users with `q` silently ignored. Prefer an exact
-    # (case-insensitive) username match over every field Overseerr/Jellyseerr
-    # may key a login by; only fall back to position 0 when there's a single
-    # candidate to begin with (the ambiguous, dangerous case is specifically
-    # *multiple* non-matching candidates — picking blindly there risks
-    # resolving to the wrong account).
     target = username.casefold()
+    safe_username = "".join(c for c in username if c.isprintable())[:32]
 
     def _matches(user: object) -> bool:
         if not isinstance(user, dict):
@@ -266,18 +238,116 @@ async def _resolve_user_id(
         )
         return any(isinstance(c, str) and c.casefold() == target for c in candidates)
 
-    matched = next((u for u in users if _matches(u)), None)
-    if matched is None:
-        if len(users) != 1:
-            return None, "user_not_found"
-        if not isinstance(users[0], dict):
-            return None, "parse_error"
-        matched = users[0]
+    matched_ids: set[int] = set()
+    seen = 0
+    total: int | None = None
+    pages_fetched = 0
+    while True:
+        # Keep sending `q`: vanilla Overseerr ignores unknown query params,
+        # Jellyseerr narrows the sweep with it. `skip` advances by the rows
+        # actually returned, not by the requested page size — neither fork
+        # caps `take` today, but this stays correct even if one starts to.
+        try:
+            user_search = await client.get(
+                f"{base_url}/api/v1/user",
+                params={"q": username, "take": _USER_SEARCH_PAGE_SIZE, "skip": seen},
+            )
+        except httpx.HTTPError:
+            return None, "http_error"
+        pages_fetched += 1
 
-    try:
-        return matched["id"], "ok"
-    except (KeyError, TypeError):
-        return None, "parse_error"
+        if user_search.status_code == 404:
+            return None, "user_not_found"
+        if user_search.status_code != 200:
+            return None, "http_error"
+
+        try:
+            user_data = user_search.json()
+        except ValueError:
+            return None, "parse_error"
+        if not isinstance(user_data, dict):
+            return None, "parse_error"
+        users = user_data.get("results", [])
+        if not isinstance(users, list):
+            return None, "parse_error"
+
+        # The result is persisted, so only an exact (case-insensitive) and
+        # unambiguous match on username/plexUsername/jellyfinUsername
+        # resolves — a substring `q` hit (Jellyseerr's `q` also matches
+        # email), an unfiltered vanilla page, or two accounts sharing a
+        # name must never bind the wrong account. `username` is
+        # user-editable and not unique in either fork, so it can equal
+        # another account's `plexUsername` or `jellyfinUsername`.
+        for u in users:
+            if not _matches(u):
+                continue
+            user_id = u.get("id") if isinstance(u, dict) else None
+            # bool is an int subclass; True would be stored as user 1.
+            if not isinstance(user_id, int) or isinstance(user_id, bool):
+                return None, "parse_error"
+            matched_ids.add(user_id)
+
+        page_info = user_data.get("pageInfo")
+        if total is None and isinstance(page_info, dict):
+            page_total = page_info.get("results")
+            if isinstance(page_total, int):
+                total = page_total
+        seen += len(users)
+
+        if not (
+            len(matched_ids) <= 1
+            and users
+            and total is not None
+            and seen < total
+            and pages_fetched < _USER_SEARCH_MAX_PAGES
+        ):
+            break
+
+    if len(matched_ids) > 1:
+        logger.warning(
+            "%d overseerr users match '%s' exactly; refusing to pick one",
+            len(matched_ids),
+            safe_username,
+        )
+        return None, "user_not_found"
+    if pages_fetched >= _USER_SEARCH_MAX_PAGES and total is not None and seen < total:
+        if matched_ids:
+            logger.warning(
+                "resolved '%s' to overseerr user %d after scanning %d of %d users; "
+                "a second account with that name beyond that point would not be seen",
+                safe_username,
+                next(iter(matched_ids)),
+                seen,
+                total,
+            )
+        else:
+            logger.warning(
+                "overseerr user search stopped after %d of %d users; accounts beyond "
+                "that cannot be resolved",
+                seen,
+                total,
+            )
+    if matched_ids:
+        return next(iter(matched_ids)), "ok"
+    return None, "user_not_found"
+
+
+async def resolve_linked_user_id(
+    client: httpx.AsyncClient, identity: Identity, base_url: str, link: LinkedUser
+) -> tuple[int | None, ResolveUserStatus]:
+    if link.overseerr_user_id is not None:
+        return link.overseerr_user_id, "ok"
+
+    user_id, status = await _resolve_user_id(client, base_url, link.overseerr_username)
+    if user_id is None:
+        return None, status
+
+    # A concurrent re-link can change the row between the resolve above and
+    # this write — the id is still returned for this in-flight call (today's
+    # behaviour, today's race window) but nothing is persisted in that case.
+    if await identity.record_overseerr_user_id(link, user_id):
+        logger.info("recorded overseerr user id for telegram %s", link.telegram_user_id)
+    return user_id, "ok"
 
 
 async def find_user_request(
@@ -303,8 +373,8 @@ async def find_user_request(
     ):
         return UserRequestLookup(status="not_configured")
 
-    overseerr_username = await identity.get_link(telegram_user_id)
-    if overseerr_username is None:
+    link = await identity.get_linked_user(telegram_user_id)
+    if link is None:
         return UserRequestLookup(status="unlinked_user")
 
     title_input = title.strip()
@@ -312,14 +382,26 @@ async def find_user_request(
         return UserRequestLookup(status="empty_input")
 
     base_url = str(settings.overseerr_url).rstrip("/")
-    user_id, resolve_status = await _resolve_user_id(overseerr_client, base_url, overseerr_username)
+    user_id, resolve_status = await resolve_linked_user_id(
+        overseerr_client, identity, base_url, link
+    )
     if user_id is None:
         return UserRequestLookup(status=resolve_status)
 
-    requests_resp = await overseerr_client.get(
-        f"{base_url}/api/v1/user/{user_id}/requests",
-        params={"take": _REQUEST_FETCH_LIMIT},
-    )
+    try:
+        requests_resp = await overseerr_client.get(
+            f"{base_url}/api/v1/user/{user_id}/requests",
+            params={"take": _REQUEST_FETCH_LIMIT},
+        )
+    except httpx.HTTPError:
+        return UserRequestLookup(status="http_error")
+    if requests_resp.status_code == 404:
+        logger.warning(
+            "overseerr user id %s for telegram %s is unknown upstream; re-issue the link",
+            user_id,
+            telegram_user_id,
+        )
+        return UserRequestLookup(status="user_not_found")
     if requests_resp.status_code != 200:
         return UserRequestLookup(status="http_error")
 

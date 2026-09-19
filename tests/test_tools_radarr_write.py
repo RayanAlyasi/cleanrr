@@ -6,7 +6,7 @@ import httpx
 import pytest
 
 from cleanrr.config import Settings
-from cleanrr.identity import Identity
+from cleanrr.identity import Identity, LinkedUser
 from cleanrr.tools.radarr_write import build_tools
 
 
@@ -27,7 +27,12 @@ def _settings(**overrides: object) -> Settings:
 @pytest.fixture
 def mock_identity() -> MagicMock:
     ident = MagicMock(spec=Identity)
-    ident.get_link = AsyncMock(return_value="alice")
+    ident.get_linked_user = AsyncMock(
+        return_value=LinkedUser(
+            telegram_user_id=123, overseerr_username="alice", linked_at=1000, overseerr_user_id=None
+        )
+    )
+    ident.record_overseerr_user_id = AsyncMock(return_value=True)
     return ident
 
 
@@ -49,7 +54,7 @@ def settings() -> Settings:
 def _overseerr_user_resolve(user_id: int = 42) -> MagicMock:
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = {"results": [{"id": user_id}]}
+    resp.json.return_value = {"results": [{"id": user_id, "username": "alice"}]}
     return resp
 
 
@@ -230,7 +235,7 @@ async def test_unlinked_user_returns_error_without_radarr_calls(
     mock_overseerr: AsyncMock,
     settings: Settings,
 ) -> None:
-    mock_identity.get_link = AsyncMock(return_value=None)
+    mock_identity.get_linked_user = AsyncMock(return_value=None)
 
     tools = build_tools(mock_radarr, mock_overseerr, mock_identity, settings, telegram_user_id=123)
     tool_fn = tools[0]

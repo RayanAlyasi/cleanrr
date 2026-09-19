@@ -1,6 +1,6 @@
 # Threat model
 
-This is an internal security assessment, not an external audit or pentest. It's based on direct review of the current codebase (`cleanrr/permissions/`, `cleanrr/identity.py`, `cleanrr/config.py`, `cleanrr/tools/*_write.py`, `cleanrr/handlers.py`) and the actual deployment shape (single Docker container on a homelab network, alongside Sonarr/Radarr/Overseerr/qBittorrent). It should be revisited whenever a new tool, a new external integration, or a change to the confirmation/identity model ships — not just on a calendar cadence.
+This is an internal security assessment, not an external audit or pentest. It's based on direct review of the current codebase (`cleanrr/permissions/`, `cleanrr/identity.py`, `cleanrr/link_migration.py`, `cleanrr/config.py`, `cleanrr/tools/*_write.py`, `cleanrr/handlers.py`) and the actual deployment shape (single Docker container on a homelab network, alongside Sonarr/Radarr/Overseerr/qBittorrent). It should be revisited whenever a new tool, a new external integration, or a change to the confirmation/identity model ships — not just on a calendar cadence.
 
 See [ARCHITECTURE.md](ARCHITECTURE.md) for the actor list and external interface table this assessment assumes.
 
@@ -44,7 +44,7 @@ Threats below were identified by tracing three things through the actual code, n
 
 **Likelihood**: Low — depends on a compromise cleanrr has no visibility into (SIM swap, session hijack).
 
-**Impact**: Bounded. Ownership checks (`identity.get_link` → Overseerr user resolution → per-request `owner_id` comparison) mean the attacker can only act on the *linked user's own* requests, not anyone else's, and cannot reach admin-only tools (`delete_torrent`) unless that specific Telegram ID is separately in `ADMIN_TELEGRAM_IDS`.
+**Impact**: Bounded. Ownership checks (`identity.get_linked_user` → `resolve_linked_user_id`, which trusts the id stored at link time and only falls back to Overseerr user resolution when there isn't one → per-request `owner_id` comparison) mean the attacker can only act on the *linked user's own* requests, not anyone else's, and cannot reach admin-only tools (`delete_torrent`) unless that specific Telegram ID is separately in `ADMIN_TELEGRAM_IDS`. Once a link's id is stored, a Plex or Jellyfin rename cannot re-point it. A link whose id is not stored yet still resolves by username on each call, and the startup backfill (`cleanrr/link_migration.py`) stores the id of the one account that matches the stored name exactly at that moment. A name that matches no account, or matches more than one of the accounts the search reaches, resolves to nothing, and nothing is stored. A stored id is trusted only while the `linked_at` and the username it was resolved for both still match the row, so a write by an image that predates those columns is read as having no stored id. A stored id that Overseerr no longer knows (a 404) is not re-resolved by username. Restoring or resetting Overseerr's own database can leave a stored id naming a different account, so re-issue link codes afterward.
 
 **Existing mitigation**: per-user ownership scoping is enforced at the tool layer, not just trusted from Telegram's identity claim.
 
@@ -58,7 +58,7 @@ Threats below were identified by tracing three things through the actual code, n
 
 **Impact**: Medium if it happens — the wrong person gets bound to the intended Overseerr account's permissions (can cancel/re-search *that* account's requests).
 
-**Existing mitigation**: code redemption is atomic and single-use (`UPDATE ... WHERE consumed_at IS NULL` in `identity.redeem_code` — a concurrent or repeat redemption attempt can't win a race against the first), and the default TTL is short. This is an operational/social-engineering risk (admin sends the code to the right person out-of-band), not a code-level flaw.
+**Existing mitigation**: code redemption is atomic and single-use (`UPDATE ... WHERE consumed_at IS NULL` in `identity.redeem_code` — a concurrent or repeat redemption attempt can't win a race against the first), and the default TTL is short. The Overseerr user id is resolved and bound to the code at `/invite` time, so a redeemed code binds the account the admin named then, not whatever account holds that username by the time it's redeemed. This is an operational/social-engineering risk (admin sends the code to the right person out-of-band), not a code-level flaw.
 
 **Residual risk**: accepted — mitigate by treating link codes like any other one-time secret when sharing them out-of-band.
 
@@ -66,7 +66,7 @@ Threats below were identified by tracing three things through the actual code, n
 
 **What**: A linked user or admin can send messages as fast as Telegram allows, and each one is a Claude turn on that user's Agent. An unlinked stranger cannot reach Claude or the Agent pool, but can still make the bot send one refusal reply and write one log line per message.
 
-**Existing mitigation** (this is a place where the risk is already actively managed, not just noted): the link gate itself (`identity.get_link` / `settings.admin_telegram_ids`, checked in `on_message` via `_is_authorized`) keeps unauthorized senders out of the Agent pool entirely; `TELEGRAM_MAX_MESSAGE_CHARS` rejects oversized messages before they reach Claude; `AgentPool` caps total concurrent per-user agents; `ConfirmationRegistry` caps both total pending confirmations (100) and per-user pending confirmations (3), specifically to stop "a single noisy client" from exhausting the global slots (see the docstring in `_registry.py`).
+**Existing mitigation** (this is a place where the risk is already actively managed, not just noted): the link gate itself (`identity.get_linked_user` / `settings.admin_telegram_ids`, checked in `on_message` via `_is_authorized`) keeps unauthorized senders out of the Agent pool entirely; `TELEGRAM_MAX_MESSAGE_CHARS` rejects oversized messages before they reach Claude; `AgentPool` caps total concurrent per-user agents; `ConfirmationRegistry` caps both total pending confirmations (100) and per-user pending confirmations (3), specifically to stop "a single noisy client" from exhausting the global slots (see the docstring in `_registry.py`).
 
 **Residual risk**: low. A linked user or admin can still flood the bot within those caps, and an unlinked stranger can still make the bot emit one refusal reply and one log line per message — Telegram's own flood limits are the only bound on that. This is the one category where the codebase already treats DoS as a first-class concern with enforced numeric limits, not just documentation.
 

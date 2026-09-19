@@ -25,6 +25,11 @@ def test_metrics_have_expected_names_and_labels() -> None:
     assert _exported_name(metrics.link_codes_redeemed_total) == "cleanrr_link_codes_redeemed"
     assert _label_names(metrics.link_codes_redeemed_total) == ["status"]
     assert _exported_name(metrics.linked_users) == "cleanrr_linked_users"
+    assert (
+        _exported_name(metrics.links_missing_overseerr_user_id)
+        == "cleanrr_links_missing_overseerr_user_id"
+    )
+    assert _label_names(metrics.links_missing_overseerr_user_id) == []
 
 
 def test_start_calls_prometheus_http_server() -> None:
