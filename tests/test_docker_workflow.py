@@ -11,11 +11,51 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
+import pytest
+
 REPO_ROOT = Path(__file__).resolve().parent.parent
 DOCKER_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "docker.yml"
 RELEASE_WORKFLOW = REPO_ROOT / ".github" / "workflows" / "release.yml"
 
 _PINNED_USES = re.compile(r"uses:\s+[\w./-]+@[0-9a-f]{40}\s+#\s+v")
+
+
+def _docker_run_workdir(run_line: str) -> str | None:
+    tokens = run_line.split()
+    for index, token in enumerate(tokens):
+        if token in ("-w", "--workdir") and index + 1 < len(tokens):
+            return tokens[index + 1]
+    return None
+
+
+def _trivy_steps(text: str) -> list[tuple[str, dict[str, str]]]:
+    lines = text.splitlines()
+    steps: list[tuple[str, dict[str, str]]] = []
+    for index, line in enumerate(lines):
+        if "uses: aquasecurity/trivy-action@" not in line:
+            continue
+        action_ref = line.split("uses:", 1)[1].split(" #", 1)[0].strip()
+        with_index: int | None = None
+        for offset in range(index + 1, len(lines)):
+            if lines[offset].strip() == "with:":
+                with_index = offset
+                break
+        assert with_index is not None, f"Trivy step at line {index + 1} has no with: block"
+        with_indent = len(lines[with_index]) - len(lines[with_index].lstrip())
+        mapping: dict[str, str] = {}
+        for candidate in lines[with_index + 1 :]:
+            if candidate.strip() == "":
+                continue
+            candidate_indent = len(candidate) - len(candidate.lstrip())
+            if candidate_indent <= with_indent:
+                break
+            stripped = candidate.strip()
+            if stripped.startswith("#"):
+                continue
+            key, _, value = stripped.partition(":")
+            mapping[key.strip()] = value.strip()
+        steps.append((action_ref, mapping))
+    return steps
 
 
 def test_workflow_runs_on_pull_requests_and_main() -> None:
@@ -62,11 +102,48 @@ def test_build_is_amd64_only_and_loaded_locally() -> None:
 
 
 def test_trivy_gate_matches_the_release_scan() -> None:
-    docker_text = DOCKER_WORKFLOW.read_text(encoding="utf-8")
-    release_text = RELEASE_WORKFLOW.read_text(encoding="utf-8")
-    for value in ("severity: CRITICAL,HIGH", 'exit-code: "1"', "ignore-unfixed: true"):
-        assert value in docker_text, f"docker.yml's Trivy scan is missing {value!r}"
-        assert value in release_text, f"release.yml's Trivy scan is missing {value!r}"
+    docker_steps = _trivy_steps(DOCKER_WORKFLOW.read_text(encoding="utf-8"))
+    release_steps = _trivy_steps(RELEASE_WORKFLOW.read_text(encoding="utf-8"))
+    assert len(docker_steps) == 1, "docker.yml must have exactly one Trivy scan step"
+    assert len(release_steps) == 1, "release.yml must have exactly one Trivy scan step"
+    docker_action, docker_with = docker_steps[0]
+    release_action, release_with = release_steps[0]
+    assert docker_action == release_action, (
+        "docker.yml's Trivy action must match release.yml's pinned SHA and version"
+    )
+    docker_gate = {key: value for key, value in docker_with.items() if key != "image-ref"}
+    release_gate = {key: value for key, value in release_with.items() if key != "image-ref"}
+    assert docker_gate == release_gate, (
+        "docker.yml's Trivy gate has drifted from release.yml's; align docker.yml to match"
+    )
+    assert docker_gate["severity"] == "CRITICAL,HIGH", (
+        "docker.yml's Trivy gate must scan for severity: CRITICAL,HIGH"
+    )
+    assert docker_gate["exit-code"] == '"1"', 'docker.yml\'s Trivy gate must set exit-code: "1"'
+    assert docker_gate["ignore-unfixed"] == "true", (
+        "docker.yml's Trivy gate must set ignore-unfixed: true"
+    )
+
+
+def test_trivy_step_parser_sees_a_diverging_gate() -> None:
+    text = """      - name: Scan image for vulnerabilities
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: cleanrr:pr
+          # widened for a one-off audit
+          severity: CRITICAL,HIGH,MEDIUM
+          exit-code: "1"
+          ignore-unfixed: true
+"""
+    steps = _trivy_steps(text)
+    assert len(steps) == 1, "the inline fixture must yield exactly one Trivy step"
+    _, mapping = steps[0]
+    assert mapping["severity"] == "CRITICAL,HIGH,MEDIUM"
+    assert set(mapping) == {"image-ref", "severity", "exit-code", "ignore-unfixed"}, (
+        "a comment line inside the with: block must not become a mapping key"
+    )
+    docker_mapping = _trivy_steps(DOCKER_WORKFLOW.read_text(encoding="utf-8"))[0][1]
+    assert mapping != docker_mapping, "the parser must catch this gate diverging from docker.yml"
 
 
 def test_import_check_runs_outside_the_copied_source() -> None:
@@ -74,10 +151,30 @@ def test_import_check_runs_outside_the_copied_source() -> None:
     match = re.search(r"run:\s*(docker run .+)$", text, re.MULTILINE)
     assert match is not None, "docker.yml is missing the import smoke check's run: line"
     run_line = match.group(1)
-    runs_outside_app = "-w /" in run_line
+    runs_outside_app = _docker_run_workdir(run_line) == "/"
     assert runs_outside_app, "import check needs -w / or it imports the copied source at /app"
     imports_cleanrr = "import cleanrr" in run_line
     assert imports_cleanrr, "import check must import cleanrr to prove the install worked"
+
+
+@pytest.mark.parametrize(
+    ("run_line", "expected"),
+    [
+        ('docker run --rm -w /app cleanrr:pr python -c "import cleanrr"', "/app"),
+        ('docker run --rm cleanrr:pr python -c "import cleanrr"', None),
+        ('docker run --rm --workdir / cleanrr:pr python -c "import cleanrr"', "/"),
+    ],
+)
+def test_docker_run_workdir_rejects_anything_but_root(run_line: str, expected: str | None) -> None:
+    assert _docker_run_workdir(run_line) == expected
+
+
+def test_cache_export_failure_does_not_fail_the_build() -> None:
+    text = DOCKER_WORKFLOW.read_text(encoding="utf-8")
+    assert "cache-to: type=gha,mode=max,ignore-error=true" in text, (
+        "docker.yml's cache-to: must set ignore-error=true so a cache export "
+        "failure doesn't fail the Build step"
+    )
 
 
 def test_no_workflow_expression_is_interpolated_into_a_run_script() -> None:
