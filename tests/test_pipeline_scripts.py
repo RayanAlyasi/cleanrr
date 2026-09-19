@@ -151,7 +151,7 @@ def test_review_pack_holds_the_diff_the_focus_and_the_gate_output(repo: Path) ->
     assert "ok    pytest" in pack
 
 
-def _assistant(message_id: str, model: str, **usage: int) -> str:
+def _assistant(message_id: str, model: str, **usage: int | dict[str, int]) -> str:
     return json.dumps(
         {"type": "assistant", "message": {"id": message_id, "model": model, "usage": usage}}
     )
@@ -184,6 +184,33 @@ def test_usage_summary_dedupes_streamed_blocks_and_prices_by_model(tmp_path: Pat
     assert summary["context_end"] == 100_005
     # Per MTok: cache reads $0.50, 1h cache writes $10, fresh input $5, output $25.
     assert summary["cost"] == pytest.approx(0.5 + 1.0 + 0.000025 + 0.01)
+
+
+def test_usage_summary_prices_five_minute_cache_writes_below_one_hour_writes(
+    tmp_path: Path,
+) -> None:
+    transcript = tmp_path / "subagent.jsonl"
+    transcript.write_text(
+        "\n".join(
+            [
+                _assistant(
+                    "m1",
+                    "claude-opus-5",
+                    cache_creation_input_tokens=1_000_000,
+                    cache_creation={"ephemeral_5m_input_tokens": 1_000_000},
+                ),
+                _assistant(
+                    "m2",
+                    "claude-opus-5",
+                    cache_creation_input_tokens=1_000_000,
+                    cache_creation={"ephemeral_1h_input_tokens": 1_000_000},
+                ),
+            ]
+        ),
+        encoding="utf-8",
+    )
+    # Per MTok on a $5 base: 5-minute writes $6.25, 1-hour writes $10.
+    assert usage_report.summarise(transcript)["cost"] == pytest.approx(6.25 + 10.0)
 
 
 def test_usage_summary_prices_fable_cache_reads_lower_and_leaves_unknown_models_unpriced(
