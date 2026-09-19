@@ -62,12 +62,29 @@ async def _run_legacy_upsert(
         await conn.close()
 
 
+# issue_code now requires an overseerr_user_id, so it can no longer produce a
+# link_codes row without one. This simulates a code issued by a pre-upgrade
+# binary that never wrote the column, which redeem_code must still accept.
+async def _run_legacy_code_insert(
+    db_path: Path, code: str, username: str, created_at: int, expires_at: int
+) -> None:
+    conn = await aiosqlite.connect(db_path)
+    try:
+        await conn.execute(
+            "INSERT INTO link_codes (code, overseerr_username, created_at, expires_at)"
+            " VALUES (?, ?, ?, ?)",
+            (code, username, created_at, expires_at),
+        )
+        await conn.commit()
+    finally:
+        await conn.close()
+
+
 async def test_issue_and_redeem(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
+        code = await store.issue_code("alice", overseerr_user_id=7)
         assert await store.redeem_code(code, telegram_user_id=12345) == "alice"
-        assert await store.get_link(12345) == "alice"
     finally:
         await store.stop()
 
@@ -83,7 +100,7 @@ async def test_redeem_invalid_code(tmp_path: Path) -> None:
 async def test_redeem_consumed_code(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
+        code = await store.issue_code("alice", overseerr_user_id=7)
         await store.redeem_code(code, telegram_user_id=12345)
         assert await store.redeem_code(code, telegram_user_id=99999) is None
     finally:
@@ -94,7 +111,7 @@ async def test_redeem_expired_code(tmp_path: Path) -> None:
     # Negative TTL means codes are issued already-expired — exercises the expiry branch.
     store = await _store(tmp_path, ttl=timedelta(hours=-1))
     try:
-        code = await store.issue_code("alice")
+        code = await store.issue_code("alice", overseerr_user_id=7)
         assert await store.redeem_code(code, telegram_user_id=12345) is None
     finally:
         await store.stop()
@@ -103,19 +120,18 @@ async def test_redeem_expired_code(tmp_path: Path) -> None:
 async def test_relink_overwrites(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code_alice = await store.issue_code("alice")
+        code_alice = await store.issue_code("alice", overseerr_user_id=7)
         await store.redeem_code(code_alice, telegram_user_id=12345)
-        code_bob = await store.issue_code("bob")
+        code_bob = await store.issue_code("bob", overseerr_user_id=9)
         assert await store.redeem_code(code_bob, telegram_user_id=12345) == "bob"
-        assert await store.get_link(12345) == "bob"
     finally:
         await store.stop()
 
 
-async def test_get_link_returns_none_when_unlinked(tmp_path: Path) -> None:
+async def test_get_linked_user_returns_none_when_unlinked(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        assert await store.get_link(99999) is None
+        assert await store.get_linked_user(99999) is None
     finally:
         await store.stop()
 
@@ -133,19 +149,13 @@ async def test_start_creates_parent_directory(tmp_path: Path) -> None:
 async def test_start_required_before_operations(tmp_path: Path) -> None:
     store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
     with pytest.raises(RuntimeError, match="start"):
-        await store.issue_code("alice")
+        await store.issue_code("alice", overseerr_user_id=7)
 
 
 async def test_redeem_code_requires_start(tmp_path: Path) -> None:
     store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
     with pytest.raises(RuntimeError, match="start"):
         await store.redeem_code("CODE-CODE", telegram_user_id=1)
-
-
-async def test_get_link_requires_start(tmp_path: Path) -> None:
-    store = Identity(db_path=tmp_path / "test.db", code_ttl=timedelta(hours=1))
-    with pytest.raises(RuntimeError, match="start"):
-        await store.get_link(1)
 
 
 async def test_get_linked_user_requires_start(tmp_path: Path) -> None:
@@ -185,7 +195,7 @@ async def test_start_twice_is_a_noop(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
         await store.start()  # must not raise or reopen the connection
-        assert await store.get_link(1) is None
+        assert await store.get_linked_user(1) is None
     finally:
         await store.stop()
 
@@ -199,7 +209,7 @@ async def test_issue_code_logs_at_info(tmp_path: Path, caplog: pytest.LogCapture
     store = await _store(tmp_path)
     try:
         with caplog.at_level(logging.INFO, logger="cleanrr.identity"):
-            code = await store.issue_code("alice")
+            code = await store.issue_code("alice", overseerr_user_id=7)
         messages = [r.getMessage() for r in caplog.records]
         assert any("issued link code for overseerr user @alice" in m for m in messages)
         assert all(code not in m for m in messages)
@@ -210,7 +220,7 @@ async def test_issue_code_logs_at_info(tmp_path: Path, caplog: pytest.LogCapture
 async def test_redeem_code_logs_success(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
+        code = await store.issue_code("alice", overseerr_user_id=7)
         with caplog.at_level(logging.INFO, logger="cleanrr.identity"):
             await store.redeem_code(code, telegram_user_id=12345)
         messages = [r.getMessage() for r in caplog.records]
@@ -234,8 +244,8 @@ async def test_user_count(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
         assert await store.user_count() == 0
-        code_a = await store.issue_code("alice")
-        code_b = await store.issue_code("bob")
+        code_a = await store.issue_code("alice", overseerr_user_id=7)
+        code_b = await store.issue_code("bob", overseerr_user_id=9)
         assert await store.user_count() == 0
         await store.redeem_code(code_a, telegram_user_id=111)
         assert await store.user_count() == 1
@@ -260,11 +270,13 @@ async def test_issue_and_redeem_with_overseerr_user_id(tmp_path: Path) -> None:
         await store.stop()
 
 
-async def test_issue_without_overseerr_user_id_leaves_link_usable(tmp_path: Path) -> None:
+async def test_redeeming_a_code_without_an_id_leaves_link_usable(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
-        assert await store.redeem_code(code, telegram_user_id=12345) == "alice"
+        await _run_legacy_code_insert(
+            tmp_path / "test.db", "LGCY-CODE", "alice", 1_000, 9_999_999_999
+        )
+        assert await store.redeem_code("LGCY-CODE", telegram_user_id=12345) == "alice"
         link = await store.get_linked_user(12345)
         assert link is not None
         assert link.overseerr_username == "alice"
@@ -293,8 +305,10 @@ async def test_relink_without_overseerr_user_id_clears_stored_id(tmp_path: Path)
     try:
         code_with_id = await store.issue_code("alice", overseerr_user_id=7)
         await store.redeem_code(code_with_id, telegram_user_id=12345)
-        code_without_id = await store.issue_code("alice")
-        await store.redeem_code(code_without_id, telegram_user_id=12345)
+        await _run_legacy_code_insert(
+            tmp_path / "test.db", "LGCY-CODE", "alice", 1_000, 9_999_999_999
+        )
+        await store.redeem_code("LGCY-CODE", telegram_user_id=12345)
         link = await store.get_linked_user(12345)
         assert link is not None
         assert link.overseerr_user_id is None
@@ -306,8 +320,10 @@ async def test_redeem_without_id_raises_missing_gauge(tmp_path: Path) -> None:
     metrics.links_missing_overseerr_user_id.set(0)
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
-        await store.redeem_code(code, telegram_user_id=12345)
+        await _run_legacy_code_insert(
+            tmp_path / "test.db", "LGCY-CODE", "alice", 1_000, 9_999_999_999
+        )
+        await store.redeem_code("LGCY-CODE", telegram_user_id=12345)
         assert metrics.links_missing_overseerr_user_id._value.get() == 1  # type: ignore[attr-defined]
     finally:
         await store.stop()
@@ -317,8 +333,10 @@ async def test_redeem_with_id_lowers_missing_gauge(tmp_path: Path) -> None:
     metrics.links_missing_overseerr_user_id.set(0)
     store = await _store(tmp_path)
     try:
-        code_without = await store.issue_code("alice")
-        await store.redeem_code(code_without, telegram_user_id=12345)
+        await _run_legacy_code_insert(
+            tmp_path / "test.db", "LGCY-CODE", "alice", 1_000, 9_999_999_999
+        )
+        await store.redeem_code("LGCY-CODE", telegram_user_id=12345)
         assert metrics.links_missing_overseerr_user_id._value.get() == 1  # type: ignore[attr-defined]
 
         code_with = await store.issue_code("alice", overseerr_user_id=7)
@@ -332,8 +350,10 @@ async def test_record_overseerr_user_id_lowers_missing_gauge(tmp_path: Path) -> 
     metrics.links_missing_overseerr_user_id.set(0)
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
-        await store.redeem_code(code, telegram_user_id=12345)
+        await _run_legacy_code_insert(
+            tmp_path / "test.db", "LGCY-CODE", "alice", 1_000, 9_999_999_999
+        )
+        await store.redeem_code("LGCY-CODE", telegram_user_id=12345)
         assert metrics.links_missing_overseerr_user_id._value.get() == 1  # type: ignore[attr-defined]
 
         link = await store.get_linked_user(12345)
@@ -369,8 +389,7 @@ async def test_get_linked_user_treats_rollback_era_row_as_stale(tmp_path: Path) 
 async def test_record_overseerr_user_id_persists_and_rejects_second_write(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
-        await store.redeem_code(code, telegram_user_id=12345)
+        await _run_legacy_upsert(tmp_path / "test.db", 12345, "alice", 1_000)
         link = await store.get_linked_user(12345)
         assert link is not None
 
@@ -387,7 +406,7 @@ async def test_record_overseerr_user_id_persists_and_rejects_second_write(tmp_pa
 async def test_record_overseerr_user_id_fails_when_linked_at_moved_on(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code = await store.issue_code("alice")
+        code = await store.issue_code("alice", overseerr_user_id=7)
         await store.redeem_code(code, telegram_user_id=12345)
         link = await store.get_linked_user(12345)
         assert link is not None
@@ -398,11 +417,11 @@ async def test_record_overseerr_user_id_fails_when_linked_at_moved_on(tmp_path: 
             overseerr_user_id=None,
         )
 
-        assert await store.record_overseerr_user_id(stale_link, 7) is False
+        assert await store.record_overseerr_user_id(stale_link, 9) is False
 
         current = await store.get_linked_user(12345)
         assert current is not None
-        assert current.overseerr_user_id is None
+        assert current.overseerr_user_id == 7
     finally:
         await store.stop()
 
@@ -433,10 +452,8 @@ async def test_record_overseerr_user_id_succeeds_when_stored_id_is_stale(tmp_pat
 async def test_links_needing_overseerr_user_id_and_count(tmp_path: Path) -> None:
     store = await _store(tmp_path)
     try:
-        code_a = await store.issue_code("alice")
-        code_b = await store.issue_code("alice")
-        await store.redeem_code(code_a, telegram_user_id=111)
-        await store.redeem_code(code_b, telegram_user_id=222)
+        await _run_legacy_upsert(tmp_path / "test.db", 111, "alice", 1_000)
+        await _run_legacy_upsert(tmp_path / "test.db", 222, "alice", 1_000)
 
         needing = await store.links_needing_overseerr_user_id()
         assert {row.telegram_user_id for row in needing} == {111, 222}

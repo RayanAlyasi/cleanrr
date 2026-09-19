@@ -102,9 +102,7 @@ class Identity:
         await self._conn.close()
         self._conn = None
 
-    async def issue_code(
-        self, overseerr_username: str, *, overseerr_user_id: int | None = None
-    ) -> str:
+    async def issue_code(self, overseerr_username: str, *, overseerr_user_id: int) -> str:
         if self._conn is None:
             raise RuntimeError("Identity.start() must be called before issue_code()")
         now = _now_ts()
@@ -171,11 +169,6 @@ class Identity:
             await self.count_links_needing_overseerr_user_id()
         )
         return overseerr_username
-
-    # Used by Phase 4 tool handlers to resolve telegram_id → overseerr_username.
-    async def get_link(self, telegram_user_id: int) -> str | None:
-        link = await self.get_linked_user(telegram_user_id)
-        return link.overseerr_username if link else None
 
     async def get_linked_user(self, telegram_user_id: int) -> LinkedUser | None:
         if self._conn is None:
