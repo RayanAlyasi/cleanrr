@@ -171,7 +171,8 @@ async def cmd_invite(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     if resolve_status == "user_not_found":
         await update.message.reply_text(
             f"Couldn't find an Overseerr user named '{overseerr_username}' — "
-            "check the username and try again."
+            "it has to match exactly one account's Overseerr, Plex or Jellyfin "
+            "username (not the email). Check it and try again."
         )
         return
     if resolve_status == "http_error":

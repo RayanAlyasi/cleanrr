@@ -461,6 +461,8 @@ async def test_cmd_invite_rejects_unknown_overseerr_user() -> None:
     reply = update.message.reply_text.await_args.args[0]
     assert "Couldn't find" in reply
     assert "nosuchuser" in reply
+    assert "exactly one account" in reply
+    assert "not the email" in reply
     identity.issue_code.assert_not_awaited()
 
 
