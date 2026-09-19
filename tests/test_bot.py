@@ -36,6 +36,7 @@ from cleanrr.identity import Identity
 def _make_settings(
     metrics_enabled: bool = False,
     metrics_port: int = 9100,
+    admin_telegram_ids: set[int] | None = None,
 ) -> Settings:
     return Settings(
         _env_file=None,  # type: ignore[call-arg]
@@ -43,6 +44,7 @@ def _make_settings(
         anthropic_api_key="sk-fake",  # type: ignore[arg-type]
         metrics_enabled=metrics_enabled,
         metrics_port=metrics_port,
+        admin_telegram_ids=admin_telegram_ids or set(),
     )
 
 
@@ -141,6 +143,95 @@ async def test_on_startup_starts_metrics_when_enabled() -> None:
 
     mock_metrics_start.assert_called_once_with(9200, str(settings.metrics_bind_address))
     mock_linked_users.set.assert_called_once_with(7)
+
+
+@pytest.mark.asyncio
+async def test_on_startup_warns_when_no_admins_configured(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=0)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings()
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+    ):
+        await _on_startup(app)
+
+    warnings = [r for r in caplog.records if r.levelno >= logging.WARNING]
+    assert len(warnings) == 1
+    assert "ADMIN_TELEGRAM_IDS" in warnings[0].message
+    assert "/invite" in warnings[0].message
+
+
+@pytest.mark.asyncio
+async def test_on_startup_does_not_warn_when_admins_configured(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=2)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings(admin_telegram_ids={424242, 515151})
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        caplog.at_level(logging.WARNING, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+    ):
+        await _on_startup(app)
+
+    assert not [r for r in caplog.records if r.levelno >= logging.WARNING]
+
+
+@pytest.mark.asyncio
+async def test_on_startup_logs_admin_count_not_ids(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    identity = MagicMock()
+    identity.start = AsyncMock()
+    identity.user_count = AsyncMock(return_value=2)
+    registry = MagicMock()
+    registry.start = AsyncMock()
+    settings = _make_settings(admin_telegram_ids={424242, 515151})
+
+    app = MagicMock()
+    app.bot_data = {
+        IDENTITY_KEY: identity,
+        SETTINGS_KEY: settings,
+        CONFIRMATION_REGISTRY_KEY: registry,
+    }
+    app.bot.set_my_commands = AsyncMock()
+
+    with (
+        caplog.at_level(logging.INFO, logger="cleanrr.bot"),
+        patch("cleanrr.bot.metrics.start"),
+    ):
+        await _on_startup(app)
+
+    assert "2" in caplog.text
+    assert "424242" not in caplog.text
+    assert "515151" not in caplog.text
 
 
 def test_build_application_wires_bot_data_and_handlers() -> None:
