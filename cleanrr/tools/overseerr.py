@@ -11,6 +11,7 @@ from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.tools._results import text_result
 from cleanrr.tools._status_label import _format_status_label
+from cleanrr.tools._untrusted import bound_text
 from cleanrr.tools._user_request import (
     _REQUEST_FETCH_LIMIT,
     enrich_titles_with_names,
@@ -23,6 +24,14 @@ if TYPE_CHECKING:
     import telegram
 
 logger = logging.getLogger(__name__)
+
+
+def _bounded_year(value: object) -> int | None:
+    """releaseYear is synthesised as an int by enrich_titles_with_names, so
+    anything else here is raw upstream data, not a year."""
+    if isinstance(value, int) and 1870 <= value <= 2200:
+        return value
+    return None
 
 
 def _user_id_error_response(tool_name: str, resolve_status: str) -> dict[str, Any]:
@@ -153,8 +162,10 @@ def build_tools(
 
                 status_label = _format_status_label(req_status, media_status)
 
-                title = media.get("title") or media.get("name") or "Unknown"
-                year = media.get("releaseYear")
+                title = bound_text(
+                    media.get("title") or media.get("name"), limit=80, default="Unknown"
+                )
+                year = _bounded_year(media.get("releaseYear"))
                 if year:
                     lines.append(f"- {title} ({year}) — {status_label} (request_id: {req_id})")
                 else:
@@ -208,8 +219,8 @@ def build_tools(
         status_label = _format_status_label(req_status, media_status)
         req_id = lookup.request.get("id")
 
-        title = media.get("title") or media.get("name")
-        year = media.get("releaseYear")
+        title = bound_text(media.get("title") or media.get("name"), limit=80, default="Unknown")
+        year = _bounded_year(media.get("releaseYear"))
         if year:
             result_text = (
                 f"Your request for {title} ({year}): {status_label}. (request_id: {req_id})"

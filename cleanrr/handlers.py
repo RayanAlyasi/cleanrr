@@ -13,6 +13,7 @@ from cleanrr.agent_pool import AgentPool
 from cleanrr.config import Settings
 from cleanrr.identity import Identity
 from cleanrr.permissions import CALLBACK_PREFIX, ConfirmationRegistry
+from cleanrr.tools._untrusted import bound_text
 from cleanrr.tools._user_request import _resolve_user_id
 
 logger = logging.getLogger(__name__)
@@ -91,8 +92,8 @@ async def on_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None
     identity: Identity = context.application.bot_data[IDENTITY_KEY]
     user = update.effective_user
     text = update.message.text
-    # username is user-controlled; strip non-printable chars to prevent log injection.
-    safe_username = "".join(c for c in (user.username or "?") if c.isprintable())[:32]
+    # username is user-controlled; bound_text keeps CR/LF and zero-width chars out of the log line.
+    safe_username = bound_text(user.username, limit=32, default="?")
 
     metrics.telegram_messages_total.labels(kind="text", command="").inc()
 

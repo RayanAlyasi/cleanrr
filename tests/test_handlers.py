@@ -236,6 +236,40 @@ async def test_on_message_refuses_unlinked_non_admin() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("username", "expected_ending"),
+    [
+        ("ev​il\r\nINFO forged", "(@ev il INFO forged)"),
+        ("​​", "(@?)"),
+        # None and "u" * 50 also pass against the pre-bound_text expression —
+        # they guard the "?" fallback and the 32-char cap, not the sanitising.
+        (None, "(@?)"),
+        ("u" * 50, "(@" + "u" * 32 + ")"),
+    ],
+)
+async def test_on_message_sanitises_the_logged_username(
+    username: str | None, expected_ending: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    settings = _make_settings(admin_ids=set())
+    identity = MagicMock()
+    identity.get_linked_user = AsyncMock(return_value=None)
+    agent = MagicMock()
+    agent.respond = AsyncMock()
+    pool = _make_pool(agent)
+    update = _make_update("hello")
+    update.effective_user.username = username
+    context = _make_context(settings, pool=pool, identity=identity)
+
+    with caplog.at_level(logging.WARNING):
+        await on_message(update, context)
+
+    record = next(r for r in caplog.records if "refused unlinked user" in r.getMessage())
+    message = record.getMessage()
+    assert message.endswith(expected_ending)
+    assert all(c.isprintable() for c in message)
+
+
+@pytest.mark.asyncio
 async def test_on_message_admin_bypasses_link_check() -> None:
     """Admin membership is config, not I/O — it must short-circuit before
     any lookup so a broken link table can't lock the admin out."""
