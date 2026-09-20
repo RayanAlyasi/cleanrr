@@ -56,7 +56,7 @@ if resp.status_code != 200:
 Telegram text, Claude's tool arguments, and every upstream response are untrusted:
 
 - Shape-check JSON before use (`isinstance(data, dict)`, `isinstance(tmdb_id, int)`); default-deny on surprises.
-- Bound upstream strings with `cleanrr/tools/_untrusted.bound_text` before they reach a Telegram reply or a log line. New code uses it; the hand-rolled `[:80]` slices in `_user_request.py`, `overseerr_write.py`, `radarr_write.py`, `sonarr_write.py`, `permissions/_formatters.py`, and `handlers.py` are bounded but not sanitised and not yet migrated — `permissions/_formatters.py` migrates first since its text reaches the Telegram confirmation prompt. `overseerr.py` interpolates `title` with no bound at all.
+- Bound upstream strings with `cleanrr/tools/_untrusted.bound_text` before they reach a Telegram reply or a log line. `permissions/_formatters.py`, `handlers.py`'s username and `overseerr.py`'s titles go through `bound_text`; the hand-rolled slices left in `_user_request.py`, `overseerr_write.py`, `radarr_write.py`, `sonarr_write.py`, `link_migration.py` and `handlers.py`'s message-preview log line are not yet migrated to `bound_text`; a numeric field such as `releaseYear` is range-checked as an `int` instead, because `bound_text` returns its default for anything that is not a `str` and would erase every year.
 - Validate tool arguments in the tool (`normalize_torrent_hash`, `request_id > 0`); the schema is a hint to the model, not a guarantee.
 - Never pass user text into a shell, a file path, a SQL string, or an HTTP body unbounded.
 - Every token-shaped setting is `SecretStr`; `.get_secret_value()` never appears in an f-string.

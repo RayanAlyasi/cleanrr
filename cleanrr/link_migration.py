@@ -51,7 +51,7 @@ async def backfill_overseerr_user_ids(
     migrated = 0
     for username, rows in by_username.items():
         # Non-printable chars can't reach a log line — same guard as
-        # cleanrr/handlers.py.
+        # cleanrr/tools/_user_request.py's _resolve_user_id.
         safe_username = "".join(c for c in username if c.isprintable())[:32]
         try:
             user_id, status = await _resolve_user_id(client, base_url, username)

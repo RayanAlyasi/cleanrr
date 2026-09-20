@@ -11,6 +11,7 @@ import httpx
 
 from cleanrr.config import Settings
 from cleanrr.tools._qbittorrent_auth import normalize_torrent_hash
+from cleanrr.tools._untrusted import bound_text
 from cleanrr.tools._user_request import _fetch_media_title
 
 _FORMATTER_TIMEOUT_SECONDS = 1.5
@@ -65,8 +66,8 @@ def _build_remove_my_request_formatter(
         # Overseerr title/name fields come from external metadata and may be
         # arbitrarily long; cap so a hostile entry can't blow past Telegram's
         # 4096-char message limit.
-        title = str(media.get("title") or media.get("name") or "Unknown")[:80]
-        media_type = str(media.get("mediaType") or "media")[:20]
+        title = bound_text(media.get("title") or media.get("name"), limit=80, default="Unknown")
+        media_type = bound_text(media.get("mediaType"), limit=20, default="media")
         status_label = _request_status_label(data.get("status"))
         return (
             f"Cancel request: {title} ({media_type}, status: {status_label})? "
@@ -114,9 +115,8 @@ def _build_delete_torrent_formatter(
         # "invalid" verdict can never drift from what the tool will actually do.
         normalized = normalize_torrent_hash(raw)
         if normalized is None:
-            shown = (
-                raw.strip()[:40] + "..." if isinstance(raw, str) and raw.strip() else "<missing>"
-            )
+            bounded = bound_text(raw, limit=40)
+            shown = f"{bounded}..." if bounded else "<missing>"
             return f"Delete torrent (invalid hash: {shown}) AND its files? Tool will refuse."
         fallback = f"Delete torrent {normalized} AND its files from disk? This cannot be undone."
         if qbit_client is None or settings.qbittorrent_url is None:
@@ -143,7 +143,7 @@ def _build_delete_torrent_formatter(
         entry = data[0]
         if not isinstance(entry, dict):
             return fallback
-        name = str(entry.get("name") or "unknown")[:80]
+        name = bound_text(entry.get("name"), limit=80, default="unknown")
         size = _format_bytes(entry.get("size"))
         return (
             f"Delete torrent '{name}' ({size}) AND its downloaded files from disk? "
@@ -155,7 +155,7 @@ def _build_delete_torrent_formatter(
 
 def _build_force_research_movie_formatter() -> ConfirmationFormatter:
     async def formatter(tool_args: dict[str, Any]) -> str:
-        title = str(tool_args.get("title") or "")[:80] or "your movie"
+        title = bound_text(tool_args.get("title"), limit=80, default="your movie")
         # Unlike remove_my_request/delete_torrent, this can't cheaply verify
         # the title against Overseerr here (that requires a full fuzzy-match
         # pass over all the user's requests, not a single lookup-by-id) — the
@@ -171,7 +171,7 @@ def _build_force_research_movie_formatter() -> ConfirmationFormatter:
 
 def _build_force_research_show_formatter() -> ConfirmationFormatter:
     async def formatter(tool_args: dict[str, Any]) -> str:
-        title = str(tool_args.get("title") or "")[:80] or "your show"
+        title = bound_text(tool_args.get("title"), limit=80, default="your show")
         return (
             f"Re-search Sonarr for '{title}' (whole series)? "
             "(If that's not one of your requests, confirming will just tell you so.)"
