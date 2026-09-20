@@ -1,5 +1,19 @@
 # Changelog
 
+## [0.9.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.8.0...v0.9.0) (2026-09-20)
+
+
+### Features
+
+* evict idle agents, add /reset ([#126](https://github.com/RayanAlyasi/cleanrr/issues/126)) ([f0fc7dd](https://github.com/RayanAlyasi/cleanrr/commit/f0fc7dddcd84a99853496ce44de5bab6b6029f03)), closes [#110](https://github.com/RayanAlyasi/cleanrr/issues/110)
+* explain why a request is stuck ([#123](https://github.com/RayanAlyasi/cleanrr/issues/123)) ([b8c7d85](https://github.com/RayanAlyasi/cleanrr/commit/b8c7d8592d9228c834f77bf518e765367cff7696)), closes [#109](https://github.com/RayanAlyasi/cleanrr/issues/109)
+
+
+### Bug Fixes
+
+* isolate the agent CLI from local settings ([#125](https://github.com/RayanAlyasi/cleanrr/issues/125)) ([389dcbe](https://github.com/RayanAlyasi/cleanrr/commit/389dcbee5a89183867cef8f6d9cc6b2b98948bc6))
+* sanitise upstream text before it's shown ([#127](https://github.com/RayanAlyasi/cleanrr/issues/127)) ([941bea9](https://github.com/RayanAlyasi/cleanrr/commit/941bea9027e9559f2e44261aaf349f824134c703))
+
 ## [0.8.0](https://github.com/RayanAlyasi/cleanrr/compare/v0.7.1...v0.8.0) (2026-09-19)
 
 
