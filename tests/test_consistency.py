@@ -8,6 +8,7 @@ judgement calls.
 from __future__ import annotations
 
 import re
+import subprocess
 import tomllib
 from pathlib import Path
 from typing import Any
@@ -242,4 +243,32 @@ def test_every_write_tool_is_named_in_the_security_docs(document: Path) -> None:
     assert not missing, (
         f"Write tools not named in {document.name}: {sorted(missing)}. A tool that can change "
         "or delete something is documented where an operator and an assessor will look."
+    )
+
+
+# Rotating a credential writes a copy of .env beside it, and the deploy runbook does
+# exactly that on the homelab. `.env` on its own does not match `.env.bak.<epoch>`.
+_MUST_BE_IGNORED = (
+    ".env.bak",
+    ".env.bak.1789774953",
+    ".env.backup",
+    ".env.old",
+    ".env.save",
+    "secrets.pem",
+    "server.key",
+    "id_rsa",
+)
+
+
+@pytest.mark.parametrize("candidate", _MUST_BE_IGNORED)
+def test_credential_files_cannot_be_committed(candidate: str) -> None:
+    """git decides, so this fails if the rule is removed rather than reworded."""
+    result = subprocess.run(
+        ["git", "check-ignore", "-q", "--no-index", candidate],
+        cwd=REPO_ROOT,
+        capture_output=True,
+    )
+    assert result.returncode == 0, (
+        f"{candidate} is not ignored by .gitignore — a file holding real credentials "
+        "could be committed. Fatal error (2) here means git could not be run."
     )
