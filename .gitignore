@@ -13,6 +13,11 @@ env/
 .env
 .env.local
 .env.*.local
+# Rotating a token writes .env.bak.<epoch> next to it; .env alone doesn't match those.
+.env.bak*
+.env.backup
+.env.old
+.env.save
 
 # Editor
 .vscode/
@@ -49,9 +54,28 @@ dist/
 htmlcov/
 coverage.xml
 
+# Secret material
+*.pem
+*.key
+id_rsa*
+
+# Backup and merge artifacts
+*.bak
+*.orig
+*.rej
+
 # Claude Code per-machine settings (the shared .claude/settings.json may still be committed)
 .claude/settings.local.json
 .claude/worktrees/
 .claude/PHASE_*.md
 .claude/plans/
 .claude/agent-memory-local/
+# Per-machine harness state. These were only in .git/info/exclude, which no clone gets.
+.claude/scheduled_tasks.json
+.claude/scheduled_tasks.lock
+.claude/routines/.state/
+.claude/checkpoints/
+.claude/mailbox/
+.claude/agent-registry.json
+.claude/first-run
+.claude/assistant-daemon-state.json
