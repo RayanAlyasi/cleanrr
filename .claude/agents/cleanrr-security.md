@@ -10,6 +10,8 @@ skills:
   - openssf-baseline
 tools: Read, Grep, Glob, Bash, WebFetch, WebSearch, Write, Edit
 disallowedTools: Agent
+experimental:
+  cacheTtl: 1h
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"

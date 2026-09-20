@@ -15,7 +15,9 @@ from pathlib import Path
 
 # USD per million tokens: (base input, output). Source: platform.claude.com pricing, 2026-09-19.
 # Cache read is 0.1x base input (0.025x on Fable). A cache write is 1.25x at the 5-minute TTL
-# and 2x at the 1-hour TTL; subagents write at 5 minutes, the main session at 1 hour.
+# and 2x at the 1-hour TTL. The main session, the orchestrator, the reviewer and the security
+# agent write at 1 hour; every other subagent takes the 5-minute default. Only the 5-minute
+# total is read below, so a 1-hour write is priced by subtraction.
 PRICES: dict[str, tuple[float, float]] = {
     "claude-fable-5": (10.0, 50.0),
     "claude-opus-5": (5.0, 25.0),

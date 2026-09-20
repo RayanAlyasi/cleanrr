@@ -8,6 +8,8 @@ maxTurns: 50
 memory: local
 tools: Read, Grep, Glob, Bash, Write, Edit
 disallowedTools: WebFetch, WebSearch, Agent
+experimental:
+  cacheTtl: 1h
 hooks:
   PreToolUse:
     - matcher: "Write|Edit"
