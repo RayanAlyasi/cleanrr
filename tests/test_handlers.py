@@ -239,8 +239,8 @@ async def test_on_message_refuses_unlinked_non_admin() -> None:
 @pytest.mark.parametrize(
     ("username", "expected_ending"),
     [
-        ("ev​il\r\nINFO forged", "(@ev il INFO forged)"),
-        ("​​", "(@?)"),
+        ("ev\u200bil\r\nINFO forged", "(@ev il INFO forged)"),
+        ("\u200b\u200b", "(@?)"),
         # None and "u" * 50 also pass against the pre-bound_text expression —
         # they guard the "?" fallback and the 32-char cap, not the sanitising.
         (None, "(@?)"),

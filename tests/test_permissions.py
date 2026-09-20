@@ -1122,6 +1122,31 @@ async def test_delete_torrent_formatter_rejects_invalid_hash_without_http_call()
 
 
 @pytest.mark.asyncio
+async def test_delete_torrent_formatter_shows_missing_for_absent_hash() -> None:
+    """None, empty, whitespace-only, non-str and zero-width-space hashes all
+    bound to "" via bound_text, so the prompt falls back to <missing> instead
+    of an empty "invalid hash: ..." suffix. The "\u200b" case is the one
+    output change this branch introduced: the old `raw.strip()` guard kept a
+    zero-width space because `.strip()` removes only whitespace."""
+    qbit = AsyncMock()
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+
+    for bad in [None, "", "   ", 42, "\u200b"]:
+        text = await formatters["delete_torrent"]({"torrent_hash": bad})
+        assert "(invalid hash: <missing>)" in text
+    qbit.get.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_delete_torrent_formatter_falls_back_on_http_error() -> None:
     qbit = AsyncMock()
     qbit.get.side_effect = httpx.RequestError("boom")
@@ -1190,7 +1215,7 @@ async def test_remove_my_request_formatter_sanitises_title_and_media_type() -> N
     resp.json.return_value = {
         "id": 7,
         "status": 1,
-        "media": {"title": "Du​ne\nPart Two", "mediaType": "movie\x07"},
+        "media": {"title": "Du\u200bne\nPart Two", "mediaType": "movie\x07"},
     }
     client.get.return_value = resp
 
@@ -1198,7 +1223,7 @@ async def test_remove_my_request_formatter_sanitises_title_and_media_type() -> N
     text = await formatters["remove_my_request"]({"request_id": 7})
 
     assert "Cancel request: Du ne Part Two (movie, status: pending)?" in text
-    assert "​" not in text
+    assert "\u200b" not in text
     assert "\n" not in text
     assert "\x07" not in text
 
@@ -1238,10 +1263,10 @@ async def test_delete_torrent_formatter_sanitises_invalid_hash_echo() -> None:
     )
 
     formatters = build_confirmation_formatters(None, qbit, settings)
-    text = await formatters["delete_torrent"]({"torrent_hash": "  ab​cd\nef  "})
+    text = await formatters["delete_torrent"]({"torrent_hash": "  ab\u200bcd\nef  "})
 
     assert "invalid hash: ab cd ef..." in text
-    assert "​" not in text
+    assert "\u200b" not in text
     assert "\n" not in text
     # Proves the ellipsis and the sentence survived the migration.
     assert text.endswith("AND its files? Tool will refuse.")
@@ -1274,7 +1299,7 @@ async def test_delete_torrent_formatter_sanitises_torrent_name() -> None:
     qbit = AsyncMock()
     resp = MagicMock()
     resp.status_code = 200
-    resp.json.return_value = [{"name": "Big​Movie\r\nS01", "size": 1_073_741_824}]
+    resp.json.return_value = [{"name": "Big\u200bMovie\r\nS01", "size": 1_073_741_824}]
     qbit.get.return_value = resp
     settings = Settings(
         _env_file=None,  # type: ignore[call-arg]
@@ -1289,7 +1314,7 @@ async def test_delete_torrent_formatter_sanitises_torrent_name() -> None:
     text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
 
     assert "Delete torrent 'Big Movie S01' (1.0 GB)" in text
-    assert "​" not in text
+    assert "\u200b" not in text
     assert "\r" not in text
     assert "\n" not in text
 
@@ -1322,13 +1347,13 @@ async def test_delete_torrent_formatter_caps_torrent_name() -> None:
 async def test_force_research_formatters_sanitise_title() -> None:
     """Red if line 158 or line 174 reverts to its str(...)[:80] slice."""
     formatters = build_confirmation_formatters(None, None, _settings())
-    movie_text = await formatters["force_research_movie"]({"title": "Du​ne\nPart Two"})
-    show_text = await formatters["force_research_show"]({"title": "The​Bear\r\nS03"})
+    movie_text = await formatters["force_research_movie"]({"title": "Du\u200bne\nPart Two"})
+    show_text = await formatters["force_research_show"]({"title": "The\u200bBear\r\nS03"})
 
     assert "Re-search Radarr for 'Du ne Part Two'?" in movie_text
     assert "Re-search Sonarr for 'The Bear S03' (whole series)?" in show_text
     for text in (movie_text, show_text):
-        assert "​" not in text
+        assert "\u200b" not in text
         assert "\r" not in text
         assert "\n" not in text
 
@@ -1346,9 +1371,9 @@ async def test_force_research_formatters_fall_back_for_a_non_string_title() -> N
     show_text = await formatters["force_research_show"]({"title": ["a"]})
     assert "your show" in show_text
 
-    zero_width_text = await formatters["force_research_movie"]({"title": "​"})
+    zero_width_text = await formatters["force_research_movie"]({"title": "\u200b"})
     assert "your movie" in zero_width_text
-    assert "​" not in zero_width_text
+    assert "\u200b" not in zero_width_text
 
 
 def test_write_tools_set_includes_all_destructive_tools() -> None:

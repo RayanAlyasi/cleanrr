@@ -662,6 +662,28 @@ async def test_list_my_requests_drops_a_non_integer_release_year(
     assert "script" not in text
     assert "2021" not in text
 
+    # isinstance(True, int) is True, so only the 1870-2200 range check at
+    # overseerr.py:32 rejects it — the regressing probe this test pins.
+    bool_requests_response = MagicMock()
+    bool_requests_response.status_code = 200
+    bool_requests_response.json.return_value = {
+        "results": [
+            {
+                "id": 1,
+                "status": 2,
+                "media": {"title": "Dune", "releaseYear": True, "status": 5},
+            },
+        ]
+    }
+
+    mock_client.get.side_effect = [user_response, bool_requests_response]
+
+    bool_result = await tool_fn.handler({})
+    bool_text = bool_result["content"][0]["text"]
+    assert "- Dune — " in bool_text
+    assert "True" not in bool_text
+    assert "(request_id: 1)" in bool_text
+
 
 # ---------------------------------------------------------------------------
 # find_my_request integration tests
@@ -869,7 +891,7 @@ async def test_find_request_sanitises_the_matched_title(
 
     req_resp = MagicMock()
     req_resp.status_code = 200
-    req_resp.json.return_value = _make_requests_payload("Dune\r\nPart​One")
+    req_resp.json.return_value = _make_requests_payload("Dune\r\nPart\u200bOne")
 
     mock_client.get.side_effect = [user_resp, req_resp]
 
@@ -883,7 +905,7 @@ async def test_find_request_sanitises_the_matched_title(
     assert len(text.splitlines()) == 1
     assert "\r" not in text
     assert "\n" not in text
-    assert "​" not in text
+    assert "\u200b" not in text
 
 
 @pytest.mark.asyncio
