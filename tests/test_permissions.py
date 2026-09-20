@@ -1180,6 +1180,177 @@ async def test_force_research_formatters_handle_empty_title() -> None:
     assert show_text
 
 
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_sanitises_title_and_media_type() -> None:
+    """Red if line 68 or line 69 reverts to its str(...)[:N] slice: the
+    zero-width space, the newline and the bell all survive that slice."""
+    client = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "media": {"title": "Du​ne\nPart Two", "mediaType": "movie\x07"},
+    }
+    client.get.return_value = resp
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+
+    assert "Cancel request: Du ne Part Two (movie, status: pending)?" in text
+    assert "​" not in text
+    assert "\n" not in text
+    assert "\x07" not in text
+
+
+@pytest.mark.asyncio
+async def test_remove_my_request_formatter_caps_media_type() -> None:
+    """Passes against the old code by design — its regressing edit is
+    dropping or widening limit=20, the limit this change must preserve."""
+    client = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = {
+        "id": 7,
+        "status": 1,
+        "media": {"title": "Dune", "mediaType": "m" * 40},
+    }
+    client.get.return_value = resp
+
+    formatters = build_confirmation_formatters(client, None, _settings())
+    text = await formatters["remove_my_request"]({"request_id": 7})
+
+    assert "m" * 20 in text
+    assert "m" * 21 not in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_sanitises_invalid_hash_echo() -> None:
+    """Red if line 118 reverts to raw.strip()[:40] + '...'."""
+    qbit = AsyncMock()
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "  ab​cd\nef  "})
+
+    assert "invalid hash: ab cd ef..." in text
+    assert "​" not in text
+    assert "\n" not in text
+    # Proves the ellipsis and the sentence survived the migration.
+    assert text.endswith("AND its files? Tool will refuse.")
+    qbit.get.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_caps_invalid_hash_echo() -> None:
+    """Limit-preservation guard — regressing edit is dropping limit=40."""
+    qbit = AsyncMock()
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "z" * 100})
+
+    assert "z" * 40 + "..." in text
+    assert "z" * 41 not in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_sanitises_torrent_name() -> None:
+    """Red if line 146 reverts to str(entry.get("name") or "unknown")[:80]."""
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = [{"name": "Big​Movie\r\nS01", "size": 1_073_741_824}]
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+
+    assert "Delete torrent 'Big Movie S01' (1.0 GB)" in text
+    assert "​" not in text
+    assert "\r" not in text
+    assert "\n" not in text
+
+
+@pytest.mark.asyncio
+async def test_delete_torrent_formatter_caps_torrent_name() -> None:
+    """Limit-preservation guard for the torrent-name site."""
+    qbit = AsyncMock()
+    resp = MagicMock()
+    resp.status_code = 200
+    resp.json.return_value = [{"name": "N" * 200, "size": 1_073_741_824}]
+    qbit.get.return_value = resp
+    settings = Settings(
+        _env_file=None,  # type: ignore[call-arg]
+        telegram_bot_token="t",  # type: ignore[arg-type]
+        anthropic_api_key="sk",  # type: ignore[arg-type]
+        qbittorrent_url="http://qbit:8080",  # type: ignore[arg-type]
+        qbittorrent_username="admin",
+        qbittorrent_password="x",  # type: ignore[arg-type]
+    )
+
+    formatters = build_confirmation_formatters(None, qbit, settings)
+    text = await formatters["delete_torrent"]({"torrent_hash": "a" * 40})
+
+    assert "N" * 80 in text
+    assert "N" * 81 not in text
+
+
+@pytest.mark.asyncio
+async def test_force_research_formatters_sanitise_title() -> None:
+    """Red if line 158 or line 174 reverts to its str(...)[:80] slice."""
+    formatters = build_confirmation_formatters(None, None, _settings())
+    movie_text = await formatters["force_research_movie"]({"title": "Du​ne\nPart Two"})
+    show_text = await formatters["force_research_show"]({"title": "The​Bear\r\nS03"})
+
+    assert "Re-search Radarr for 'Du ne Part Two'?" in movie_text
+    assert "Re-search Sonarr for 'The Bear S03' (whole series)?" in show_text
+    for text in (movie_text, show_text):
+        assert "​" not in text
+        assert "\r" not in text
+        assert "\n" not in text
+
+
+@pytest.mark.asyncio
+async def test_force_research_formatters_fall_back_for_a_non_string_title() -> None:
+    """The one deliberate output change in this plan: a non-str or
+    all-non-printable title now renders as the placeholder instead of
+    str(value) (e.g. '42') or a bare invisible string."""
+    formatters = build_confirmation_formatters(None, None, _settings())
+
+    movie_text = await formatters["force_research_movie"]({"title": 42})
+    assert "your movie" in movie_text
+
+    show_text = await formatters["force_research_show"]({"title": ["a"]})
+    assert "your show" in show_text
+
+    zero_width_text = await formatters["force_research_movie"]({"title": "​"})
+    assert "your movie" in zero_width_text
+    assert "​" not in zero_width_text
+
+
 def test_write_tools_set_includes_all_destructive_tools() -> None:
     expected = {
         "remove_my_request",
