@@ -47,7 +47,7 @@ links_missing_overseerr_user_id = Gauge(
 tool_calls_total = Counter(
     "cleanrr_tool_calls_total",
     # status is a fixed per-tool vocabulary; unauthorized and reset are
-    # stamped by can_use_tool before any prompt is sent.
+    # stamped by can_use_tool before the tool runs.
     "Calls to in-process MCP tools",
     ["tool", "status"],
 )

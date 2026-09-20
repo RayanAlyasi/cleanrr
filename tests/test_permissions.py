@@ -627,6 +627,7 @@ async def test_reset_mid_send_cancels_the_prompt_once_registered() -> None:
     result = await cb("mcp__cleanrr__remove_my_request", {"request_id": 7}, MagicMock())
 
     assert isinstance(result, PermissionResultDeny)
+    assert result.message == "the user reset this conversation"
     bot.edit_message_text.assert_awaited_once_with(chat_id=42, message_id=999, text="Cancelled.")
     assert _counter("remove_my_request", "denied") == before + 1
     assert await reg.has_pending_for_user(42) is False

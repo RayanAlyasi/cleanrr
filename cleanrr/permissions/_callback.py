@@ -160,6 +160,8 @@ def make_can_use_tool(
         # sweeper and timeout() also resolve to False, but the outcome distinguishes
         # them from a user-cancel click.
         outcome: Outcome = pending.outcome or "timed_out"
+        # "confirmed" here means the user tapped Confirm, not that the tool ran —
+        # a refusal after the tap is counted on tool_calls_total{status="reset"}.
         metrics.destructive_actions_total.labels(tool=bare_name, outcome=outcome).inc()
         if allowed and is_retired is not None and is_retired():
             # A Confirm tap that lands after /reset must not run anything.
@@ -177,6 +179,8 @@ def make_can_use_tool(
         await _edit_outcome(telegram_bot, telegram_user_id, sent_message.message_id, outcome_text)
         if allowed:
             return PermissionResultAllow(updated_input=input_data)
+        if is_retired is not None and is_retired():
+            return PermissionResultDeny(message="the user reset this conversation")
         return PermissionResultDeny(
             message="confirmation timed out" if outcome == "timed_out" else "user declined"
         )
