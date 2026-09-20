@@ -26,7 +26,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 
 - Runs as a Docker service on the same network as your existing media stack.
 - Chat is limited to linked users and admins; everyone else is told to ask for a link code. Replies via Claude (model configurable — defaults to Sonnet).
-- Maintains a per-user conversation session so follow-up questions retain context.
+- Maintains a per-user conversation session so follow-up questions retain context, until `AGENT_IDLE_TIMEOUT_MINUTES` (default 30) of silence or `/reset` — either drops it, and the next message starts a fresh one.
 - Identity: admin issues one-time codes via `/invite`; friends bind their Telegram account to an Overseerr user via `/link`. Stored in SQLite, persists across restarts. The friend's numeric Overseerr user id is captured when the code is issued; links made before that are matched to their id on the next start, and once the id is stored, a Plex or Jellyfin rename no longer breaks the link.
 - Request lookup via Overseerr — full list or fuzzy-match a single title.
 - TV show status via Sonarr — episode progress and why it's stuck, quoting Sonarr's own queue message.
@@ -43,6 +43,7 @@ cleanrr is the conversational layer for those residual cases. The friend asks th
 | `/start` | Anyone | Sanity check; bot confirms it's online. |
 | `/help` | Anyone | List the commands available. |
 | `/link <code>` | Anyone | Redeem a one-time code to bind your Telegram account to an Overseerr user. |
+| `/reset` | Linked users + admins | Forget the current conversation and start fresh; also cancels any confirmation you have waiting. |
 | `/invite <overseerr_username>` | Admin only | Issue a one-time link code for a friend. Requires `ADMIN_TELEGRAM_IDS` set. |
 
 ## Destructive actions
@@ -122,6 +123,7 @@ All configuration is via environment variables — no code edits needed. Copy [`
 | `CLAUDE_TIMEOUT_SECONDS` | `120` | Wall-clock seconds before giving up on a single Claude response. Must exceed `CONFIRMATION_TTL_SECONDS`. |
 | `TELEGRAM_MAX_MESSAGE_CHARS` | `2000` | Reject incoming Telegram messages longer than this before they reach Claude. |
 | `CONFIRMATION_TTL_SECONDS` | `60` | How long a destructive-action confirmation prompt waits for a button click before timing out. |
+| `AGENT_IDLE_TIMEOUT_MINUTES` | `30` | Stop a user's Claude subprocess after this many minutes idle; their next message starts a fresh conversation. `0` keeps subprocesses until restart; capped at `1440` (a day). |
 
 ### Docker compose interpolation
 

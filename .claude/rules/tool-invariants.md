@@ -21,3 +21,6 @@ These are the load-bearing facts a new or changed tool must keep true. Each one 
 - Upstream JSON is shape-checked before use; upstream strings are bounded and sanitised with `bound_text` before interpolation or logging.
 - Ownership of a request is verified against Overseerr's `requestedBy.id`, not against the argument Claude passed.
 - Overseerr list endpoints never embed titles; resolve via `_fetch_media_details`/`enrich_titles_with_names` rather than reading `media["title"]` from a list response.
+- `Agent.start()` refuses a retired Agent (`AgentRetired`) — the no-resurrection guard; `AgentPool` builds a fresh one.
+- `Agent.stop()` is never wrapped in `asyncio.wait_for` and a retirement task is never cancelled: a raw cancellation inside the SDK's `close()` skips its terminate/kill escalation and orphans the CLI child.
+- A retired Agent is refused every `WRITE_TOOLS` call — before the prompt, after `register()`, and after a Confirm tap.

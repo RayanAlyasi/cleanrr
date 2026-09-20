@@ -162,6 +162,30 @@ class ConfirmationRegistry:
             pending.outcome = "timed_out"
             pending.future.set_result(False)
 
+    async def has_pending_for_user(self, telegram_user_id: int) -> bool:
+        async with self._lock:
+            self._evict_expired_locked()
+            return any(p.telegram_user_id == telegram_user_id for p in self._entries.values())
+
+    async def cancel_for_user(self, telegram_user_id: int) -> int:
+        """Resolve every pending confirmation for a user like a Cancel tap, so
+        can_use_tool stamps ``denied`` and edits the prompt to "Cancelled."."""
+        async with self._lock:
+            matched_ids = [
+                cid
+                for cid, pending in self._entries.items()
+                if pending.telegram_user_id == telegram_user_id
+            ]
+            popped = [self._entries.pop(cid) for cid in matched_ids]
+        cancelled = 0
+        for pending in popped:
+            if pending.future.done():
+                continue
+            pending.outcome = "denied"
+            pending.future.set_result(False)
+            cancelled += 1
+        return cancelled
+
     async def _sweep_loop(self) -> None:
         interval = max(self._ttl_seconds / 2, 1.0)
         try:

@@ -54,12 +54,15 @@ def make_can_use_tool(
     formatters: dict[str, ConfirmationFormatter],
     *,
     telegram_user_id: int,
+    is_retired: Callable[[], bool] | None = None,
 ) -> CanUseTool:
     """Build the ``can_use_tool`` callback wired to a specific Telegram bot + registry.
 
     ``telegram_user_id`` is the caller this callback is scoped to — each
     per-user Agent builds its own callback via this factory rather than
-    reading a shared, process-wide "current user" global.
+    reading a shared, process-wide "current user" global. ``is_retired`` is
+    the retirement check the owning Agent passes, consulted before a new
+    confirmation prompt can be created.
     """
 
     async def _resolve_prompt_text(tool_name: str, tool_args: dict[str, Any]) -> str:
@@ -86,6 +89,11 @@ def make_can_use_tool(
         bare_name = tool_name.rsplit("__", 1)[-1]
         if bare_name not in WRITE_TOOLS:
             return PermissionResultAllow(updated_input=input_data)
+
+        if is_retired is not None and is_retired():
+            metrics.tool_calls_total.labels(tool=bare_name, status="reset").inc()
+            logger.warning("refused %s: this conversation was reset", bare_name)
+            return PermissionResultDeny(message="the user reset this conversation")
 
         if bare_name in ADMIN_ONLY_TOOLS and telegram_user_id not in settings.admin_telegram_ids:
             metrics.tool_calls_total.labels(tool=bare_name, status="unauthorized").inc()
@@ -136,6 +144,11 @@ def make_can_use_tool(
             prompt_message_id=sent_message.message_id,
         )
 
+        if is_retired is not None and is_retired():
+            # /reset marks the Agent retired before it scans the registry, so a
+            # prompt that was mid-send when it ran was not there to cancel.
+            await registry.cancel_for_user(telegram_user_id)
+
         try:
             allowed = await asyncio.wait_for(
                 pending.future, timeout=settings.confirmation_ttl_seconds
@@ -147,7 +160,17 @@ def make_can_use_tool(
         # sweeper and timeout() also resolve to False, but the outcome distinguishes
         # them from a user-cancel click.
         outcome: Outcome = pending.outcome or "timed_out"
+        # "confirmed" here means the user tapped Confirm, not that the tool ran —
+        # a refusal after the tap is counted on tool_calls_total{status="reset"}.
         metrics.destructive_actions_total.labels(tool=bare_name, outcome=outcome).inc()
+        if allowed and is_retired is not None and is_retired():
+            # A Confirm tap that lands after /reset must not run anything.
+            metrics.tool_calls_total.labels(tool=bare_name, status="reset").inc()
+            logger.warning("refused %s: confirmed after the conversation was reset", bare_name)
+            await _edit_outcome(
+                telegram_bot, telegram_user_id, sent_message.message_id, "Cancelled."
+            )
+            return PermissionResultDeny(message="the user reset this conversation")
         outcome_text = {
             "confirmed": "Confirmed.",
             "denied": "Cancelled.",
@@ -156,6 +179,8 @@ def make_can_use_tool(
         await _edit_outcome(telegram_bot, telegram_user_id, sent_message.message_id, outcome_text)
         if allowed:
             return PermissionResultAllow(updated_input=input_data)
+        if is_retired is not None and is_retired():
+            return PermissionResultDeny(message="the user reset this conversation")
         return PermissionResultDeny(
             message="confirmation timed out" if outcome == "timed_out" else "user declined"
         )

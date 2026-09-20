@@ -146,3 +146,45 @@ def test_clear_sdk_credentials_is_idempotent() -> None:
 
     clear_sdk_credentials()
     clear_sdk_credentials()
+
+
+def test_agent_idle_timeout_minutes_default(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.delenv("AGENT_IDLE_TIMEOUT_MINUTES", raising=False)
+
+    assert _settings().agent_idle_timeout_minutes == 30
+
+
+def test_agent_idle_timeout_minutes_zero_is_accepted(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("AGENT_IDLE_TIMEOUT_MINUTES", "0")
+
+    assert _settings().agent_idle_timeout_minutes == 0
+
+
+def test_agent_idle_timeout_minutes_rejects_negative(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("AGENT_IDLE_TIMEOUT_MINUTES", "-1")
+
+    with pytest.raises(ValidationError):
+        _settings()
+
+
+def test_agent_idle_timeout_minutes_rejects_over_1440(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("AGENT_IDLE_TIMEOUT_MINUTES", "1441")
+
+    with pytest.raises(ValidationError):
+        _settings()
+
+
+def test_agent_idle_timeout_minutes_parses_from_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("TELEGRAM_BOT_TOKEN", "fake-bot-token")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-fake")
+    monkeypatch.setenv("AGENT_IDLE_TIMEOUT_MINUTES", "45")
+
+    assert _settings().agent_idle_timeout_minutes == 45

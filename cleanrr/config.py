@@ -144,6 +144,12 @@ class Settings(BaseSettings):
         gt=0,
         description="How long a destructive-action confirmation prompt waits for a click before timing out and denying.",  # noqa: E501
     )
+    agent_idle_timeout_minutes: int = Field(
+        default=30,
+        ge=0,
+        le=1440,
+        description="Stop a user's Claude CLI subprocess after this many minutes with no message from them; their next message starts a fresh conversation. 0 disables eviction.",  # noqa: E501
+    )
 
     @field_validator("admin_telegram_ids", mode="before")
     @classmethod

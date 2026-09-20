@@ -46,6 +46,8 @@ links_missing_overseerr_user_id = Gauge(
 
 tool_calls_total = Counter(
     "cleanrr_tool_calls_total",
+    # status is a fixed per-tool vocabulary; unauthorized and reset are
+    # stamped by can_use_tool before the tool runs.
     "Calls to in-process MCP tools",
     ["tool", "status"],
 )
@@ -56,6 +58,19 @@ destructive_actions_total = Counter(
     # Pre-confirmation rejections (admin gates, ownership) belong on tool_calls_total.
     "Destructive tool invocations by tool and confirmation outcome",
     ["tool", "outcome"],
+)
+
+agent_pool_agents = Gauge(
+    "cleanrr_agent_pool_agents",
+    "Agents in the pool right now, one Claude CLI subprocess each",
+)
+
+agent_evictions_total = Counter(
+    "cleanrr_agent_evictions_total",
+    # Allowed reason values: idle | reset (see agent_pool.EvictionReason).
+    # Shutdown stops every Agent but is not an eviction and is not counted here.
+    "Agents removed from the pool before shutdown, by reason",
+    ["reason"],
 )
 
 

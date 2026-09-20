@@ -1,11 +1,12 @@
 from __future__ import annotations
 
 import logging
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
 from cleanrr import metrics
+from cleanrr.agent import AgentRetired
 from cleanrr.config import Settings
 from cleanrr.handlers import (
     AGENT_POOL_KEY,
@@ -16,6 +17,7 @@ from cleanrr.handlers import (
     cmd_help,
     cmd_invite,
     cmd_link,
+    cmd_reset,
     cmd_start,
     on_confirmation,
     on_error,
@@ -109,6 +111,10 @@ def _counter_value(label_values: dict[str, str]) -> float:
     return metrics.claude_requests_total.labels(**label_values)._value.get()
 
 
+def _duration_sample_count() -> float:
+    return sum(bucket.get() for bucket in metrics.claude_request_duration_seconds._buckets)  # type: ignore[attr-defined]
+
+
 # ---------------------------------------------------------------------------
 # on_message
 # ---------------------------------------------------------------------------
@@ -179,6 +185,7 @@ async def test_on_message_success_path() -> None:
     context = _make_context(settings, pool=pool)
 
     before = _counter_value({"status": "success"})
+    before_duration = _duration_sample_count()
 
     await on_message(update, context)
 
@@ -186,6 +193,7 @@ async def test_on_message_success_path() -> None:
     agent.respond.assert_awaited_once_with(prompt="hello")
     update.message.reply_text.assert_awaited_once_with("hi back")
     assert _counter_value({"status": "success"}) == before + 1
+    assert _duration_sample_count() == before_duration + 1
 
 
 @pytest.mark.asyncio
@@ -336,6 +344,57 @@ async def test_on_message_returns_when_message_is_none() -> None:
     await on_message(update, context)
 
     agent.respond.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_message_retries_once_on_agent_retired(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """A /reset racing this message must not strand the user — the retry
+    fetches a fresh Agent from the pool and runs the turn on that one."""
+    settings = _make_settings()
+    first_agent = MagicMock()
+    first_agent.respond = AsyncMock(side_effect=AgentRetired("retired"))
+    second_agent = MagicMock()
+    second_agent.respond = AsyncMock(return_value="fresh")
+    pool = MagicMock()
+    pool.get_or_create = AsyncMock(side_effect=[first_agent, second_agent])
+    update = _make_update("hello", user_id=1)
+    context = _make_context(settings, pool=pool)
+
+    before = _counter_value({"status": "success"})
+
+    with caplog.at_level(logging.WARNING):
+        await on_message(update, context)
+
+    update.message.reply_text.assert_awaited_once_with("fresh")
+    assert pool.get_or_create.await_count == 2
+    second_agent.respond.assert_awaited_once_with(prompt="hello")
+    assert _counter_value({"status": "success"}) == before + 1
+    assert "retired" in caplog.text.lower()
+
+
+@pytest.mark.asyncio
+async def test_on_message_at_capacity_when_retry_finds_no_slot() -> None:
+    """A retry that lands on a full pool must reply at-capacity, not hang
+    or crash — the retiring Agent still counts against the cap."""
+    settings = _make_settings()
+    first_agent = MagicMock()
+    first_agent.respond = AsyncMock(side_effect=AgentRetired("retired"))
+    pool = MagicMock()
+    pool.get_or_create = AsyncMock(side_effect=[first_agent, None])
+    update = _make_update("hello", user_id=1)
+    context = _make_context(settings, pool=pool)
+
+    before = _counter_value({"status": "at_capacity"})
+    before_duration = _duration_sample_count()
+
+    await on_message(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "capacity" in reply.lower()
+    assert _counter_value({"status": "at_capacity"}) == before + 1
+    assert _duration_sample_count() == before_duration
 
 
 # ---------------------------------------------------------------------------
@@ -628,6 +687,143 @@ async def test_cmd_link_happy_path() -> None:
 
 
 # ---------------------------------------------------------------------------
+# cmd_reset
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_no_message() -> None:
+    update = MagicMock()
+    update.message = None
+    update.effective_user = MagicMock()
+    context = _make_context(_make_settings())
+
+    await cmd_reset(update, context)  # must not raise
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_no_effective_user() -> None:
+    update = MagicMock()
+    update.message = MagicMock()
+    update.message.reply_text = AsyncMock()
+    update.effective_user = None
+    context = _make_context(_make_settings())
+
+    await cmd_reset(update, context)
+
+    update.message.reply_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_increments_command_metric() -> None:
+    pool = MagicMock()
+    pool.reset = AsyncMock(return_value="nothing")
+    registry = MagicMock()
+    registry.cancel_for_user = AsyncMock(return_value=0)
+    update = _make_update("", user_id=1)
+    context = _make_context(_make_settings(), pool=pool, confirmation_registry=registry)
+
+    before = metrics.telegram_messages_total.labels(kind="command", command="reset")._value.get()
+
+    await cmd_reset(update, context)
+
+    assert (
+        metrics.telegram_messages_total.labels(kind="command", command="reset")._value.get()
+        == before + 1
+    )
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_refuses_unlinked_non_admin() -> None:
+    settings = _make_settings(admin_ids=set())
+    identity = MagicMock()
+    identity.get_linked_user = AsyncMock(return_value=None)
+    pool = MagicMock()
+    pool.reset = AsyncMock()
+    registry = MagicMock()
+    registry.cancel_for_user = AsyncMock()
+    update = _make_update("", user_id=1)
+    context = _make_context(settings, pool=pool, identity=identity, confirmation_registry=registry)
+
+    await cmd_reset(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert "/link" in reply
+    pool.reset.assert_not_awaited()
+    registry.cancel_for_user.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("outcome", "cancelled", "expected"),
+    [
+        ("dropped", 0, "Fresh start — your next message begins a new conversation."),
+        (
+            "dropped",
+            1,
+            "Cancelled the confirmation you had waiting — nothing was run. "
+            "Fresh start — your next message begins a new conversation.",
+        ),
+        ("nothing", 0, "Nothing to reset — your next message begins a new conversation."),
+        (
+            "nothing",
+            2,
+            "Cancelled the confirmation you had waiting — nothing was run. "
+            "Nothing to reset — your next message begins a new conversation.",
+        ),
+        (
+            "retiring",
+            0,
+            "Still finishing your previous conversation — give it a moment, then try again.",
+        ),
+        (
+            "retiring",
+            1,
+            "Cancelled the confirmation you had waiting — nothing was run. "
+            "Still finishing your previous conversation — give it a moment, then try again.",
+        ),
+    ],
+)
+async def test_cmd_reset_reply_table(outcome: str, cancelled: int, expected: str) -> None:
+    pool = MagicMock()
+    pool.reset = AsyncMock(return_value=outcome)
+    registry = MagicMock()
+    registry.cancel_for_user = AsyncMock(return_value=cancelled)
+    update = _make_update("", user_id=1)
+    context = _make_context(_make_settings(), pool=pool, confirmation_registry=registry)
+
+    await cmd_reset(update, context)
+
+    reply = update.message.reply_text.await_args.args[0]
+    assert reply == expected
+    if cancelled:
+        assert "nothing was run" in reply
+
+
+@pytest.mark.asyncio
+async def test_cmd_reset_resets_pool_before_cancelling_confirmations() -> None:
+    """Load-bearing order: reset() marks the Agent retired before the cancel
+    runs, so can_use_tool refuses any destructive call the retired Agent's
+    still-finishing turn might try, and the cancel can't race a fresh prompt."""
+    pool = MagicMock()
+    pool.reset = AsyncMock(return_value="dropped")
+    registry = MagicMock()
+    registry.cancel_for_user = AsyncMock(return_value=1)
+    update = _make_update("", user_id=7)
+    context = _make_context(_make_settings(), pool=pool, confirmation_registry=registry)
+
+    manager = MagicMock()
+    manager.attach_mock(pool.reset, "reset")
+    manager.attach_mock(registry.cancel_for_user, "cancel")
+
+    await cmd_reset(update, context)
+
+    pool.reset.assert_awaited_once_with(7)
+    registry.cancel_for_user.assert_awaited_once_with(7)
+    assert manager.mock_calls == [call.reset(7), call.cancel(7)]
+
+
+# ---------------------------------------------------------------------------
 # cmd_start
 # ---------------------------------------------------------------------------
 
@@ -684,6 +880,7 @@ async def test_cmd_help_lists_commands() -> None:
     assert "/start" in reply
     assert "/help" in reply
     assert "/link" in reply
+    assert "/reset" in reply
     assert "/invite" in reply
     assert "linked" in reply.lower()
 

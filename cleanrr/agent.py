@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import tempfile
+import time
 from contextlib import AsyncExitStack
 from functools import lru_cache
 from pathlib import Path
@@ -42,15 +43,19 @@ logger = logging.getLogger(__name__)
 
 # _TIMEOUT_RESTART_SECONDS exceeds the SDK's own 60s initialize floor
 # (ClaudeSDKClient.connect), so a slow-but-valid start() isn't cancelled.
-# Worst case a timeout holds the lock for drain + stop() + start() =
-# 10 + 20 + 75 = 105s, which must stay under claude_timeout_seconds
-# (default 120s) since a queued respond() waits on the lock that long.
+# _max_lock_hold_seconds() below is the single statement of the worst-case
+# lock hold; a queued respond() bounds its own lock wait at timeout_seconds
+# (see the wait_for(self._lock.acquire(), ...) in respond()) and gets a
+# graceful TimeoutError when the hold is longer.
 # A client left None by a previous failed restart adds one further bounded
 # start() (75s) before the turn's own wait_for even begins, so a caller
 # queued behind that turn can exceed claude_timeout_seconds on the lock
 # acquire and get a graceful TimeoutError rather than hang.
 _TIMEOUT_RECOVERY_SECONDS = 10.0
 _TIMEOUT_RESTART_SECONDS = 75.0
+# The SDK transport's own documented close() bound (subprocess_cli.py) — never
+# used as a timeout itself, only as a term in _max_lock_hold_seconds below.
+_SDK_CLOSE_SECONDS = 20.0
 
 
 @lru_cache(maxsize=1)
@@ -165,6 +170,10 @@ Three tiers of content. Treat them differently.
 """
 
 
+class AgentRetired(RuntimeError):
+    """Raised when a retired Agent is asked to start again; AgentPool builds a fresh one."""
+
+
 class Agent:
     """Long-lived wrapper around a ClaudeSDKClient dedicated to one Telegram user.
 
@@ -219,6 +228,8 @@ class Agent:
         # The SDK fronts one CLI subprocess per client; overlapping queries
         # would interleave on the shared response stream. Serialize them.
         self._lock = asyncio.Lock()
+        self._retired = False
+        self._last_active_at = time.monotonic()
 
     @property
     def confirmation_registry(self) -> ConfirmationRegistry | None:
@@ -228,7 +239,27 @@ class Agent:
     def overseerr_client(self) -> httpx.AsyncClient | None:
         return self._overseerr_client
 
+    @property
+    def is_busy(self) -> bool:
+        return self._lock.locked()
+
+    @property
+    def is_retired(self) -> bool:
+        return self._retired
+
+    @property
+    def idle_seconds(self) -> float:
+        return time.monotonic() - self._last_active_at
+
+    def touch(self) -> None:
+        self._last_active_at = time.monotonic()
+
+    def mark_retired(self) -> None:
+        self._retired = True
+
     async def start(self, telegram_user_id: int) -> None:
+        if self._retired:
+            raise AgentRetired("this Agent was retired; AgentPool builds a fresh one")
         self._telegram_user_id = telegram_user_id
         if self._client is not None:
             return
@@ -344,6 +375,7 @@ class Agent:
                 settings,
                 formatters,
                 telegram_user_id=telegram_user_id,
+                is_retired=lambda: self._retired,
             )
         else:
             self._options.permission_mode = "dontAsk"
@@ -352,11 +384,48 @@ class Agent:
         self._stack = stack
 
     async def stop(self) -> None:
-        if self._stack is None:
+        # A retirement task and a turn's own reconnect can both call stop();
+        # snapshot-and-clear before awaiting so the second caller sees
+        # self._stack already None and never re-closes the same stack.
+        stack = self._stack
+        if stack is None:
             return
-        await self._stack.aclose()
         self._stack = None
         self._client = None
+        await stack.aclose()
+
+    def _max_lock_hold_seconds(self) -> float:
+        # Worst case one respond() can hold the lock: a rebuild for a client a
+        # previous failure left None (75) + the turn (timeout_seconds) +
+        # reconnect close (20) + reconnect retry (timeout_seconds) +
+        # post-timeout recovery (drain 10 + close 20 + start 75) = 440s at
+        # the default claude_timeout_seconds=120.0.
+        return (
+            2 * _TIMEOUT_RESTART_SECONDS
+            + 2 * self._timeout_seconds
+            + _TIMEOUT_RECOVERY_SECONDS
+            + 2 * _SDK_CLOSE_SECONDS
+        )
+
+    async def retire(self) -> None:
+        """Stop this Agent for good, waiting out a turn still in flight."""
+        self.mark_retired()
+        acquired = False
+        try:
+            await asyncio.wait_for(self._lock.acquire(), timeout=self._max_lock_hold_seconds())
+            acquired = True
+        except TimeoutError:
+            logger.warning(
+                "retiring user %s's agent while a turn is still in flight",
+                self._telegram_user_id,
+            )
+        try:
+            # Not wrapped in wait_for: the SDK's close() escalation must run
+            # to completion or the CLI child is orphaned as <defunct>.
+            await self.stop()
+        finally:
+            if acquired:
+                self._lock.release()
 
     async def _interrupt_and_drain(self, client: ClaudeSDKClient) -> None:
         await client.interrupt()
@@ -438,8 +507,11 @@ class Agent:
                     # caller gets the same graceful "couldn't reach Claude" reply.
                     logger.exception("SDK connection lost mid-query — reconnecting")
 
+                    # Not wrapped: the SDK's close() escalation must run to
+                    # completion or the CLI child is orphaned as <defunct>.
+                    await self.stop()
+
                     async def _reconnect_and_retry() -> str:
-                        await self.stop()
                         await self.start(telegram_user_id)
                         return await _query()
 
@@ -460,4 +532,8 @@ class Agent:
                     logger.exception("post-timeout recovery failed; the client may be unusable")
                 raise
         finally:
+            # touch() before release(), no await between: idle is measured
+            # from the end of this turn, not a stale value a sweeper could
+            # catch between release() and a parked waiter's resume.
+            self.touch()
             self._lock.release()
