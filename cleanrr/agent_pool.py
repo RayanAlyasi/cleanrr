@@ -167,7 +167,11 @@ class AgentPool:
             idle = [
                 (telegram_user_id, agent)
                 for telegram_user_id, agent in self._agents.items()
-                if agent.idle_seconds >= self._idle_timeout_seconds and not agent.is_busy
+                if agent.idle_seconds >= self._idle_timeout_seconds
+                and not agent.is_busy
+                # Same bound reset() enforces: one live plus one retiring
+                # Agent per user.
+                and telegram_user_id not in self._retiring.values()
             ]
             registry = self._confirmation_registry
             for telegram_user_id, agent in idle:

@@ -185,6 +185,7 @@ async def test_on_message_success_path() -> None:
     context = _make_context(settings, pool=pool)
 
     before = _counter_value({"status": "success"})
+    before_duration = _duration_sample_count()
 
     await on_message(update, context)
 
@@ -192,6 +193,7 @@ async def test_on_message_success_path() -> None:
     agent.respond.assert_awaited_once_with(prompt="hello")
     update.message.reply_text.assert_awaited_once_with("hi back")
     assert _counter_value({"status": "success"}) == before + 1
+    assert _duration_sample_count() == before_duration + 1
 
 
 @pytest.mark.asyncio
@@ -385,12 +387,14 @@ async def test_on_message_at_capacity_when_retry_finds_no_slot() -> None:
     context = _make_context(settings, pool=pool)
 
     before = _counter_value({"status": "at_capacity"})
+    before_duration = _duration_sample_count()
 
     await on_message(update, context)
 
     reply = update.message.reply_text.await_args.args[0]
     assert "capacity" in reply.lower()
     assert _counter_value({"status": "at_capacity"}) == before + 1
+    assert _duration_sample_count() == before_duration
 
 
 # ---------------------------------------------------------------------------
@@ -770,13 +774,13 @@ async def test_cmd_reset_refuses_unlinked_non_admin() -> None:
         (
             "retiring",
             0,
-            "Still finishing your last reset — give it a moment, then try again.",
+            "Still finishing your previous conversation — give it a moment, then try again.",
         ),
         (
             "retiring",
             1,
             "Cancelled the confirmation you had waiting — nothing was run. "
-            "Still finishing your last reset — give it a moment, then try again.",
+            "Still finishing your previous conversation — give it a moment, then try again.",
         ),
     ],
 )

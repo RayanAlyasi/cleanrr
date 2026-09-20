@@ -319,9 +319,9 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
 
     pool: AgentPool = context.application.bot_data[AGENT_POOL_KEY]
     registry: ConfirmationRegistry = context.application.bot_data[CONFIRMATION_REGISTRY_KEY]
-    # Load-bearing order: reset() marks the Agent retired before this cancel
-    # runs, so can_use_tool refuses any destructive call the retired Agent's
-    # still-finishing turn might try, and the cancel can't race a fresh prompt.
+    # On "dropped", reset() marks the Agent retired before the cancel runs,
+    # so a retired turn cannot reserve a new prompt; a refused reset still
+    # cancels the user's pending confirmations.
     outcome = await pool.reset(user.id)
     cancelled = await registry.cancel_for_user(user.id)
 
@@ -333,7 +333,9 @@ async def cmd_reset(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     elif outcome == "nothing":
         sentences.append("Nothing to reset — your next message begins a new conversation.")
     else:
-        sentences.append("Still finishing your last reset — give it a moment, then try again.")
+        sentences.append(
+            "Still finishing your previous conversation — give it a moment, then try again."
+        )
     await update.message.reply_text(" ".join(sentences))
 
 

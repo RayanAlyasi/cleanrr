@@ -313,6 +313,45 @@ async def test_sweep_once_retires_when_no_pending_confirmation() -> None:
 
 
 @pytest.mark.asyncio
+async def test_sweep_once_leaves_replacement_agent_alone_while_previous_retires() -> None:
+    """The idle sweeper must respect the same one-retiring-per-user bound
+    reset() enforces, not just detach anything idle."""
+    pool = _make_pool()
+    fake_agent_cls = _fake_agent_class()
+    park = asyncio.Event()
+
+    async def _parked_retire() -> None:
+        await park.wait()
+
+    with patch("cleanrr.agent_pool.Agent", fake_agent_cls):
+        first = _mock_agent(await pool.get_or_create(1))
+        first.retire.side_effect = _parked_retire
+
+        result = await pool.reset(1)
+        assert result == "dropped"
+
+        second = _mock_agent(await pool.get_or_create(1))
+        second.idle_seconds = 9999.0
+
+        before = metrics.agent_evictions_total.labels(reason="idle")._value.get()  # type: ignore[attr-defined]
+        await pool._sweep_once()
+
+        assert 1 in pool._agents
+        second.mark_retired.assert_not_called()
+        after = metrics.agent_evictions_total.labels(reason="idle")._value.get()  # type: ignore[attr-defined]
+        assert after == before
+
+        [retiring_task] = list(pool._retiring)
+        park.set()
+        await retiring_task
+
+        await pool._sweep_once()
+        await asyncio.gather(*pool._retiring)
+
+    assert 1 not in pool._agents
+
+
+@pytest.mark.asyncio
 async def test_sweep_once_leaves_fresh_agent_alone() -> None:
     pool = _make_pool()
     fake_agent_cls = _fake_agent_class()
