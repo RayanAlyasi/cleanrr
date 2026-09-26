@@ -1,7 +1,7 @@
 ---
 name: cleanrr-orchestrator
 description: Runs one cleanrr change end to end when the calling session's context is too large to orchestrate from — plans it with cleanrr-planner, reviews the plan as the owner would, then follows /cleanrr-ship to an open pull request with green CI. From a fresh session run /cleanrr-plan and /cleanrr-ship directly instead. Never merges, never deploys.
-model: fable
+model: claude-opus-5-5
 effort: xhigh
 color: blue
 maxTurns: 150

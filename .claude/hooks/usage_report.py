@@ -13,16 +13,18 @@ import json
 import sys
 from pathlib import Path
 
-# USD per million tokens: (base input, output). Source: platform.claude.com pricing, 2026-09-19.
-# Cache read is 0.1x base input (0.025x on Fable). A cache write is 1.25x at the 5-minute TTL
-# and 2x at the 1-hour TTL. The main session, the orchestrator, the reviewer and the security
-# agent write at 1 hour; every other subagent takes the 5-minute default. Only the 5-minute
-# total is read below, so a 1-hour write is priced by subtraction.
-PRICES: dict[str, tuple[float, float]] = {
-    "claude-fable-5": (10.0, 50.0),
-    "claude-opus-5": (5.0, 25.0),
-    "claude-sonnet-5": (2.0, 10.0),
-    "claude-haiku-4-5": (1.0, 5.0),
+# USD per million tokens: (base input, output, cache-read multiplier). Source:
+# platform.claude.com pricing, 2026-09-26. Prefixes match in order, so a longer id comes first.
+# A cache write is 1.25x at the 5-minute TTL and 2x at the 1-hour TTL. The main session, the
+# orchestrator, the reviewer and the security agent write at 1 hour; every other subagent takes
+# the 5-minute default. Only the 5-minute total is read below, so a 1-hour write is priced by
+# subtraction.
+PRICES: dict[str, tuple[float, float, float]] = {
+    "claude-fable-5": (10.0, 50.0, 0.025),
+    "claude-opus-5-5": (4.0, 20.0, 0.05),
+    "claude-opus-5": (5.0, 25.0, 0.1),
+    "claude-sonnet-5": (2.0, 10.0, 0.1),
+    "claude-haiku-4-5": (1.0, 5.0, 0.1),
 }
 TOKEN_KEYS = (
     "input_tokens",
@@ -34,9 +36,9 @@ SHORT_WRITE_KEY = "ephemeral_5m_input_tokens"
 
 
 def _price(model: str) -> tuple[float, float, float] | None:
-    for prefix, (base, out) in PRICES.items():
+    for prefix, price in PRICES.items():
         if model.startswith(prefix):
-            return base, out, 0.025 if "fable" in prefix else 0.1
+            return price
     return None
 
 

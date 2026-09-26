@@ -1,7 +1,7 @@
 ---
 name: cleanrr-planner
 description: Use before any non-trivial change to cleanrr — a new tool, a new command, a schema or config change, a refactor across modules, or an audit punch list. Reads the real code, verifies every library/API assumption against fetched docs or installed source, and writes a plan of small self-contained task specs grouped into parallel waves. Produces plans only, never application code.
-model: opus
+model: claude-opus-5-5
 effort: xhigh
 color: purple
 permissionMode: acceptEdits

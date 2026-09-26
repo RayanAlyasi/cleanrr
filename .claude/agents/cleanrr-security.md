@@ -1,7 +1,7 @@
 ---
 name: cleanrr-security
 description: Security audit of a cleanrr branch or the whole repository. Covers the application trust boundary (Telegram input, Claude tool arguments, upstream *arr data, secrets, the confirmation gate) and OpenSSF Security Baseline maturity-2 regressions (workflows, release pipeline, docs that the badge depends on). Proves findings with concrete scenarios; resolves its own Verify items with fetched docs; never edits code.
-model: opus
+model: claude-opus-5-5
 effort: xhigh
 color: red
 maxTurns: 55

@@ -1,7 +1,7 @@
 ---
 name: cleanrr-reviewer
 description: Independent review of a cleanrr branch diff for correctness, intent-vs-literal drift, duplication, test gaps, and docs↔code coherence. Runs after the coders and the gate, before the PR. Reports findings with severity; never edits the code it reviews.
-model: opus
+model: claude-opus-5-5
 effort: xhigh
 color: blue
 maxTurns: 50
