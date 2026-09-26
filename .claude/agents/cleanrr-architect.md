@@ -1,7 +1,7 @@
 ---
 name: cleanrr-architect
 description: Second opinion on ONE hard architecture decision in cleanrr, consulted by cleanrr-planner when a plan hits a structural fork — process model, storage schema, a trust boundary, a new external interface, or two viable designs with no clear winner. Returns a short decision memo, never a plan and never code. Do not use for routine planning, task breakdown, or review.
-model: fable
+model: claude-opus-5-5
 effort: xhigh
 color: orange
 maxTurns: 15

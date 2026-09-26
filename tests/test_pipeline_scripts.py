@@ -213,6 +213,18 @@ def test_usage_summary_prices_five_minute_cache_writes_below_one_hour_writes(
     assert usage_report.summarise(transcript)["cost"] == pytest.approx(6.25 + 10.0)
 
 
+def test_usage_summary_prices_opus_5_5_apart_from_opus_5(tmp_path: Path) -> None:
+    transcript = tmp_path / "opus.jsonl"
+    transcript.write_text(
+        _assistant(
+            "m1", "claude-opus-5-5", cache_read_input_tokens=1_000_000, output_tokens=1_000_000
+        ),
+        encoding="utf-8",
+    )
+    # $4 base at 0.05x for reads, $20 output; Opus 5 rates would give $0.50 + $25.
+    assert usage_report.summarise(transcript)["cost"] == pytest.approx(0.20 + 20.0)
+
+
 def test_usage_summary_prices_fable_cache_reads_lower_and_leaves_unknown_models_unpriced(
     tmp_path: Path,
 ) -> None:
